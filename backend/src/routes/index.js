@@ -1,9 +1,8 @@
 import express from 'express'
+import { postChatMessage } from '../controllers/chatController.js'
 
 const router = express.Router()
 
-// Importar rotas específicas aqui
-// import userRoutes from './userRoutes.js'
-// router.use('/users', userRoutes)
+router.post('/chat', postChatMessage)
 
 export default router
