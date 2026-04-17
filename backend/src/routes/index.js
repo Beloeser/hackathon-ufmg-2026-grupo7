@@ -1,9 +1,8 @@
 import express from 'express'
+import { login } from '../controllers/authController.js'
 
 const router = express.Router()
 
-// Importar rotas específicas aqui
-// import userRoutes from './userRoutes.js'
-// router.use('/users', userRoutes)
+router.post('/login', login)
 
 export default router
