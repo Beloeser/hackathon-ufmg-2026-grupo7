@@ -1,13 +1,11 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
-import MainLayout from './layouts/MainLayout'
+import HomeScreen from './pages/HomeScreen'
 
 function App() {
   return (
     <Router>
       <Routes>
-        <Route element={<MainLayout />}>
-          {/* Rotas serão adicionadas aqui */}
-        </Route>
+        <Route path="/" element={<HomeScreen />} />
       </Routes>
     </Router>
   )
