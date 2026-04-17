@@ -8,6 +8,9 @@ import joblib
 import numpy as np
 import pandas as pd
 
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+_DEFAULT_MODEL = os.path.join(_SCRIPT_DIR, "models", "gp_vitoria.joblib")
+
 
 def _load_model(model_path: str) -> Dict[str, Any]:
     obj = joblib.load(model_path)
@@ -51,8 +54,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Prediz chance de vitória (Êxito) com GP.")
     parser.add_argument(
         "--model",
-        default=os.path.join("backend", "ml", "models", "gp_vitoria.joblib"),
-        help="Caminho do modelo treinado.",
+        default=_DEFAULT_MODEL,
+        help="Caminho do modelo treinado (padrão: ml/models/gp_vitoria.joblib ao lado deste script).",
     )
     parser.add_argument(
         "--json",
@@ -60,6 +63,20 @@ def main() -> int:
         help="Payload JSON (string) com campos (UF, Assunto, Sub-assunto, Valor da causa, etc.).",
     )
     args = parser.parse_args()
+
+    if not os.path.isfile(args.model):
+        print(
+            json.dumps(
+                {
+                    "status": "error",
+                    "message": f"Modelo não encontrado: {args.model}",
+                    "hint": "O arquivo não vai no Git (é pesado). Treine localmente: "
+                    "python backend/ml/train_vitoria_gp.py",
+                },
+                ensure_ascii=False,
+            )
+        )
+        return 1
 
     model = _load_model(args.model)
     pipe = model["pipeline"]
@@ -109,5 +126,14 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as e:
+        print(
+            json.dumps(
+                {"status": "error", "message": str(e)},
+                ensure_ascii=False,
+            )
+        )
+        raise SystemExit(1)
 
