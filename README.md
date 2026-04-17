@@ -148,6 +148,14 @@ Colunas principais:
   --predictions-csv-out db/processed/gp_treino_resultados.csv
 ```
 
+Para treino rápido (ambiente limitado):
+```bash
+.venv/bin/python backend/ml/models/SucessRate/train_vitoria_gp.py \
+  --input-file db/raw/Hackaton_Enter_Base_Candidatos.csv \
+  --predictions-csv-out db/processed/gp_treino_resultados.csv \
+  --max-train-rows 500
+```
+
 ## Etapa 2: Modelo de Acordo (Acordo)
 Script: `backend/ml/models/Acordo/train_acordo_gp.py`
 
@@ -239,6 +247,22 @@ Parâmetros do script e impacto prático:
   --predictions-csv-out db/processed/gp_treino_resultados.csv
 
 # 3) Otimização do acordo (sem GP)
+.venv/bin/python backend/ml/models/Acordo/train_acordo_gp.py \
+  --input-csv db/processed/gp_treino_resultados.csv \
+  --output-csv db/processed/gp_acordo_treino_resultados.csv
+```
+
+## Execução End-to-End (Rápida para GitHub)
+Use este fluxo quando quiser gerar CSVs atualizados rapidamente para commit/push:
+
+```bash
+# 1) Treino rápido da vitória
+.venv/bin/python backend/ml/models/SucessRate/train_vitoria_gp.py \
+  --input-file db/raw/Hackaton_Enter_Base_Candidatos.csv \
+  --predictions-csv-out db/processed/gp_treino_resultados.csv \
+  --max-train-rows 500
+
+# 2) Atualiza acordo com base no CSV acima
 .venv/bin/python backend/ml/models/Acordo/train_acordo_gp.py \
   --input-csv db/processed/gp_treino_resultados.csv \
   --output-csv db/processed/gp_acordo_treino_resultados.csv
