@@ -7,21 +7,27 @@ dotenv.config()
 
 const sampleUsers = [
   {
-    username: 'maria.silva',
+    email: 'maria.silva@escritorio.com',
     password: 'senha123',
     name: 'Maria Silva',
     role: 'advogado',
   },
   {
-    username: 'joao.santos',
+    email: 'joao.santos@escritorio.com',
     password: 'adv2024',
     name: 'Joao Santos',
     role: 'advogado',
   },
   {
-    username: 'ana.costa',
+    email: 'ana.costa@escritorio.com',
     password: 'demo456',
     name: 'Ana Costa',
+    role: 'admin',
+  },
+  {
+    email: 'admin@escritorio.com',
+    password: 'admin',
+    name: 'AdminAdmin',
     role: 'admin',
   },
 ]
@@ -445,15 +451,25 @@ const sampleCases = [
 
 const runSeed = async () => {
   await connectDB()
+  try {
+    const userIndexes = await User.collection.indexes()
+    const hasLegacyUsernameIndex = userIndexes.some((idx) => idx.name === 'username_1')
+    if (hasLegacyUsernameIndex) {
+      await User.collection.dropIndex('username_1')
+      console.log('Indice legado username_1 removido da colecao users.')
+    }
+  } catch (error) {
+    console.log('Nao foi possivel remover indice legado username_1:', error.message)
+  }
 
   const createdUsers = []
   for (const userData of sampleUsers) {
-    let user = await User.findOne({ username: userData.username })
+    let user = await User.findOne({ email: userData.email })
     if (!user) {
       user = await User.create(userData)
-      console.log(`Criado usuario: ${user.username}`)
+      console.log(`Criado usuario: ${user.email}`)
     } else {
-      console.log(`Usuario ja existe: ${user.username}`)
+      console.log(`Usuario ja existe: ${user.email}`)
     }
     createdUsers.push(user)
   }
