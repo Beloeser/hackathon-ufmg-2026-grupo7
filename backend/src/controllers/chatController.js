@@ -1,11 +1,26 @@
 import OpenAI from 'openai'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import { runPythonScript } from '../utils/pythonRunner.js'
 
 const MODEL_NAME = process.env.OPENAI_MODEL || 'gpt-5.4'
 const MAX_CONTEXT_CONTRACTS = 8
 const PROCESS_NUMBER_REGEX = /\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/g
+const DEFAULT_DEFENSE_COST = Number(process.env.CUSTO_DEFESA_PADRAO || 7000)
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..')
+const PRECOMPUTED_ANALYSIS_CSV = path.resolve(
+  REPO_ROOT,
+  'db',
+  'processed',
+  'processos_em_andamento_avaliados.csv'
+)
 
 let openaiClient = null
+let precomputedAnalysisByProcess = null
+let precomputedAnalysisMtimeMs = null
 
 function isLikelyPlaceholderApiKey(apiKey) {
   const normalized = String(apiKey || '').trim().toLowerCase()
@@ -121,6 +136,140 @@ function sanitizeContractInputs(input) {
     .slice(0, MAX_CONTEXT_CONTRACTS)
 }
 
+function parseCsvLine(line) {
+  const values = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i]
+    const nextChar = line[i + 1]
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        current += '"'
+        i += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+
+    if (char === ',' && !inQuotes) {
+      values.push(current)
+      current = ''
+      continue
+    }
+
+    current += char
+  }
+
+  values.push(current)
+  return values
+}
+
+function toNumberOrNull(value) {
+  const number = Number(value)
+  return Number.isFinite(number) ? number : null
+}
+
+function normalizeProcessKey(value) {
+  return String(value || '').trim()
+}
+
+function loadPrecomputedAnalysisByProcess() {
+  if (!fs.existsSync(PRECOMPUTED_ANALYSIS_CSV)) {
+    precomputedAnalysisByProcess = new Map()
+    precomputedAnalysisMtimeMs = null
+    return precomputedAnalysisByProcess
+  }
+
+  const stats = fs.statSync(PRECOMPUTED_ANALYSIS_CSV)
+  if (
+    precomputedAnalysisByProcess &&
+    Number.isFinite(precomputedAnalysisMtimeMs) &&
+    precomputedAnalysisMtimeMs === stats.mtimeMs
+  ) {
+    return precomputedAnalysisByProcess
+  }
+
+  const raw = fs.readFileSync(PRECOMPUTED_ANALYSIS_CSV, 'utf-8').replace(/^\uFEFF/, '')
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (lines.length < 2) {
+    precomputedAnalysisByProcess = new Map()
+    return precomputedAnalysisByProcess
+  }
+
+  const headers = parseCsvLine(lines[0]).map((header) => String(header || '').trim())
+  const map = new Map()
+
+  for (const line of lines.slice(1)) {
+    const values = parseCsvLine(line)
+    const row = {}
+    for (let i = 0; i < headers.length; i += 1) {
+      row[headers[i]] = values[i]
+    }
+
+    const processNumber = normalizeProcessKey(
+      row['Número do processo'] || row['NÃºmero do processo'] || row.numero_processo
+    )
+
+    if (!processNumber) {
+      continue
+    }
+
+    const chanceWin = toNumberOrNull(row.chance_vitoria)
+    const suggestedAgreement = toNumberOrNull(row.valor_acordo_justo)
+    const expectedDefenseCost = toNumberOrNull(row.custo_esperado_defesa)
+    const expectedAgreementCost = toNumberOrNull(row.custo_total_esperado_acordo)
+    const expectedLoss = toNumberOrNull(row.valor_esperado_perda)
+
+    let estimatedEconomy = toNumberOrNull(row.economia_estimada)
+    if (estimatedEconomy === null && expectedDefenseCost !== null && expectedAgreementCost !== null) {
+      estimatedEconomy = expectedDefenseCost - expectedAgreementCost
+    } else if (
+      estimatedEconomy === null &&
+      expectedLoss !== null &&
+      expectedAgreementCost !== null &&
+      Number.isFinite(DEFAULT_DEFENSE_COST)
+    ) {
+      estimatedEconomy = expectedLoss + DEFAULT_DEFENSE_COST - expectedAgreementCost
+    }
+
+    const estimatedProfit = estimatedEconomy !== null ? Math.max(estimatedEconomy, 0) : null
+    const estimatedLoss = estimatedEconomy !== null ? Math.max(-estimatedEconomy, 0) : null
+
+    map.set(processNumber, {
+      numero_processo: processNumber,
+      taxa_probabilidade_vitoria: chanceWin === null ? null : chanceWin * 100,
+      fazer_acordo: suggestedAgreement !== null,
+      valor_acordo_justo: suggestedAgreement,
+      economia_estimada: estimatedEconomy,
+      lucro_estimado_economia: estimatedProfit,
+      prejuizo_estimado_economia: estimatedLoss,
+      custo_esperado_defesa: expectedDefenseCost,
+      custo_total_esperado_acordo: expectedAgreementCost,
+    })
+  }
+
+  precomputedAnalysisByProcess = map
+  precomputedAnalysisMtimeMs = stats.mtimeMs
+  return precomputedAnalysisByProcess
+}
+
+function getPrecomputedAnalysisByProcess(processNumber) {
+  const map = loadPrecomputedAnalysisByProcess()
+  if (!map || map.size === 0) {
+    return null
+  }
+
+  return map.get(normalizeProcessKey(processNumber)) || null
+}
+
 function formatCurrency(value) {
   const number = Number(value)
   if (!Number.isFinite(number)) {
@@ -157,12 +306,15 @@ function buildModelDecisionBlock(contractAnalyses) {
       item.fazer_acordo && item.valor_acordo_justo !== null && item.valor_acordo_justo !== undefined
         ? formatCurrency(item.valor_acordo_justo)
         : 'N/A'
+    const estimatedEconomy = toFiniteNumber(item.economia_estimada)
+    const estimatedEconomyLabel = estimatedEconomy === null ? 'N/A' : formatCurrency(estimatedEconomy)
 
     return [
       `- Processo: ${item.numero_processo}`,
       `  Decisao: ${decisionLabel(item.fazer_acordo)}`,
       `  Chance de vitoria: ${formatPercent(item.taxa_probabilidade_vitoria)}`,
       `  Valor sugerido de acordo: ${suggestedValue}`,
+      `  Economia estimada (acordo vs defesa): ${estimatedEconomyLabel}`,
     ].join('\n')
   })
 
@@ -183,12 +335,15 @@ function buildContractContextPrompt(contractAnalyses) {
     const agreementValue = item.fazer_acordo
       ? formatCurrency(item.valor_acordo_justo)
       : 'N/A (nao recomendado)'
+    const estimatedEconomy = toFiniteNumber(item.economia_estimada)
+    const estimatedEconomyLabel = estimatedEconomy === null ? 'N/A' : formatCurrency(estimatedEconomy)
 
     return [
       `Processo ${item.numero_processo}:`,
       `- Taxa de probabilidade de vitoria: ${item.taxa_probabilidade_vitoria}%`,
       `- Decisao recomendada: ${decisionLabel}`,
       `- Valor de acordo justo: ${agreementValue}`,
+      `- Economia estimada (acordo vs defesa): ${estimatedEconomyLabel}`,
     ].join('\n')
   })
 
@@ -312,16 +467,30 @@ async function runContractAnalysisByProcess({ processNumber, contratosCsv }) {
     args.push('--contratos-csv', contratosCsv)
   }
 
-  const result = await runPythonScript('analise.py', args)
-  if (!result || result.status === 'error') {
-    return null
-  }
+  try {
+    const result = await runPythonScript('analise.py', args)
+    if (!result || result.status === 'error') {
+      const precomputed = getPrecomputedAnalysisByProcess(processNumber)
+      return precomputed || null
+    }
 
-  return {
-    numero_processo: processNumber,
-    taxa_probabilidade_vitoria: result.taxa_probabilidade_vitoria,
-    fazer_acordo: Boolean(result.fazer_acordo),
-    valor_acordo_justo: result.valor_acordo_justo ?? null,
+    return {
+      numero_processo: processNumber,
+      taxa_probabilidade_vitoria: result.taxa_probabilidade_vitoria,
+      fazer_acordo: Boolean(result.fazer_acordo),
+      valor_acordo_justo: result.valor_acordo_justo ?? null,
+      economia_estimada: result.economia_estimada ?? null,
+      lucro_estimado_economia: result.lucro_estimado_economia ?? null,
+      prejuizo_estimado_economia: result.prejuizo_estimado_economia ?? null,
+      custo_esperado_defesa: result.custo_esperado_defesa ?? null,
+      custo_total_esperado_acordo: result.custo_total_esperado_acordo ?? null,
+    }
+  } catch (error) {
+    const precomputed = getPrecomputedAnalysisByProcess(processNumber)
+    if (precomputed) {
+      return precomputed
+    }
+    throw error
   }
 }
 
@@ -340,6 +509,11 @@ async function runContractAnalysisByInput({ contractInput }) {
     taxa_probabilidade_vitoria: result.taxa_probabilidade_vitoria,
     fazer_acordo: Boolean(result.fazer_acordo),
     valor_acordo_justo: result.valor_acordo_justo ?? null,
+    economia_estimada: result.economia_estimada ?? null,
+    lucro_estimado_economia: result.lucro_estimado_economia ?? null,
+    prejuizo_estimado_economia: result.prejuizo_estimado_economia ?? null,
+    custo_esperado_defesa: result.custo_esperado_defesa ?? null,
+    custo_total_esperado_acordo: result.custo_total_esperado_acordo ?? null,
   }
 }
 
