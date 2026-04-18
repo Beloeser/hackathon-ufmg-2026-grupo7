@@ -89,6 +89,31 @@ const DocumentType = styled.p`
   line-height: ${({ $viewMode }) => ($viewMode === 'grid' ? '1.45' : '1.55')};
 `
 
+const MetricsRow = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+`
+
+const MetricChip = styled.span`
+  border: 1px solid #e5e7eb;
+  border-radius: 999px;
+  background: #f8fafc;
+  padding: 4px 8px;
+  color: #334155;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.2;
+`
+
+const ExpectationText = styled.p`
+  margin: 8px 0 0;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+`
+
 const StatusChip = styled.span`
   flex-shrink: 0;
   align-self: ${({ $viewMode }) => ($viewMode === 'grid' ? 'flex-start' : 'auto')};
@@ -160,6 +185,30 @@ const ErrorState = styled.div`
   font-size: 14px;
 `
 
+function hasNumericValue(value) {
+  return Number.isFinite(Number(value))
+}
+
+function formatPercent(value) {
+  if (!hasNumericValue(value)) {
+    return 'N/A'
+  }
+
+  return `${Number(value).toFixed(1)}%`
+}
+
+function formatCurrency(value) {
+  if (!hasNumericValue(value)) {
+    return 'N/A'
+  }
+
+  return Number(value).toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    maximumFractionDigits: 0,
+  })
+}
+
 export default function DocumentsPanel({
   folders,
   selectedFolder,
@@ -201,6 +250,18 @@ export default function DocumentsPanel({
         <DocumentCollection $viewMode={viewMode}>
           {documents.map((doc) => {
             const isActive = doc.id === selectedDocumentId
+            const modelMetrics = doc.modelMetrics || {}
+            const metricChips = []
+
+            if (hasNumericValue(modelMetrics.taxaVitoriaPercent)) {
+              metricChips.push(`Vitoria: ${formatPercent(modelMetrics.taxaVitoriaPercent)}`)
+            }
+            if (hasNumericValue(modelMetrics.valorAcordoProposto)) {
+              metricChips.push(`Acordo: ${formatCurrency(modelMetrics.valorAcordoProposto)}`)
+            }
+            if (hasNumericValue(modelMetrics.economiaFinanceiraEstimada)) {
+              metricChips.push(`Economia: ${formatCurrency(modelMetrics.economiaFinanceiraEstimada)}`)
+            }
 
             return (
               <DocumentCard
@@ -223,6 +284,16 @@ export default function DocumentsPanel({
                   <DocumentText $viewMode={viewMode}>
                     <DocumentTitle $viewMode={viewMode}>{doc.title}</DocumentTitle>
                     <DocumentType $viewMode={viewMode}>{doc.type}</DocumentType>
+                    {metricChips.length > 0 ? (
+                      <MetricsRow>
+                        {metricChips.map((chipLabel, chipIndex) => (
+                          <MetricChip key={`${doc.id}-metric-${chipIndex}`}>{chipLabel}</MetricChip>
+                        ))}
+                      </MetricsRow>
+                    ) : null}
+                    {modelMetrics.expectativaResumo ? (
+                      <ExpectationText>{modelMetrics.expectativaResumo}</ExpectationText>
+                    ) : null}
                   </DocumentText>
                   <StatusChip $viewMode={viewMode}>{doc.status}</StatusChip>
                 </DocumentMain>

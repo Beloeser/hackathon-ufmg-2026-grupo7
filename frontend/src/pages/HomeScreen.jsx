@@ -369,6 +369,11 @@ function formatDateFromValue(value) {
   }).format(date)
 }
 
+function toNumberOrNull(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 function extractCaseList(payload) {
   if (Array.isArray(payload)) {
     return payload
@@ -390,20 +395,43 @@ function normalizeIncomingDocument(rawDocument, index) {
     return null
   }
 
-  const idSource = rawDocument.id || rawDocument._id || rawDocument.processNumber || `case-${index}`
+  const processNumber = String(
+    rawDocument.processNumber || rawDocument.numeroProcesso || rawDocument.numero_processo || ''
+  ).trim()
+  const idSource = rawDocument.id || rawDocument._id || processNumber || `case-${index}`
   const id = String(idSource)
-  const status = String(rawDocument.status || 'em_analise')
+  const status = String(
+    rawDocument.internalStatus || rawDocument.status || rawDocument.microResult || rawDocument.macroResult || 'Em andamento'
+  )
+  const rawModelMetrics = rawDocument.modelMetrics || rawDocument.metricasModelo || {}
   const folderIdCandidate = Number(rawDocument.folderId)
   const folderId = Number.isFinite(folderIdCandidate) ? folderIdCandidate : mapStatusToFolderId(status)
 
   return {
     id,
     folderId,
-    title: rawDocument.title || (rawDocument.processNumber ? `Processo ${rawDocument.processNumber}` : `Processo ${id}`),
-    type: rawDocument.type || rawDocument.subject || 'Assunto nao informado',
+    title: rawDocument.title || (processNumber ? `Processo ${processNumber}` : `Processo ${id}`),
+    type: rawDocument.type || rawDocument.subject || rawDocument.assunto || 'Assunto nao informado',
+    subType: rawDocument.subType || rawDocument.subSubject || rawDocument.sub_assunto || '',
     date: rawDocument.date || formatDateFromValue(rawDocument.updatedAt || rawDocument.createdAt),
     status,
-    processNumber: rawDocument.processNumber || '',
+    processNumber,
+    uf: String(rawDocument.uf || '').trim().toUpperCase(),
+    claimValue: Number(rawDocument.claimValue ?? rawDocument.valor_da_causa ?? 0),
+    condemnationValue: Number(rawDocument.condemnationValue ?? rawDocument.valor_da_condenacao_indenizacao ?? 0),
+    macroResult: rawDocument.macroResult || rawDocument.resultado_macro || '',
+    microResult: rawDocument.microResult || rawDocument.resultado_micro || '',
+    modelMetrics: {
+      taxaVitoriaPercent: toNumberOrNull(rawModelMetrics.taxaVitoriaPercent),
+      valorAcordoProposto: toNumberOrNull(rawModelMetrics.valorAcordoProposto),
+      economiaFinanceiraEstimada: toNumberOrNull(rawModelMetrics.economiaFinanceiraEstimada),
+      probabilidadeAceiteAcordoPercent: toNumberOrNull(rawModelMetrics.probabilidadeAceiteAcordoPercent),
+      expectativaPerda: toNumberOrNull(rawModelMetrics.expectativaPerda),
+      custoTotalEsperadoAcordo: toNumberOrNull(rawModelMetrics.custoTotalEsperadoAcordo),
+      expectativaResumo: rawModelMetrics.expectativaResumo || '',
+      decisaoSugerida: rawModelMetrics.decisaoSugerida || '',
+      fonte: rawModelMetrics.fonte || '',
+    },
   }
 }
 

@@ -444,6 +444,19 @@ function formatCurrency(value) {
     currency: 'BRL',
   }).format(parsed)
 }
+function toNullableNumber(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function formatPercent(value) {
+  const parsed = Number(value)
+  if (!Number.isFinite(parsed)) {
+    return 'Nao informado'
+  }
+
+  return `${parsed.toFixed(1)}%`
+}
 
 function formatDateTime(value) {
   if (!value) {
@@ -535,6 +548,8 @@ function mapCaseFromApi(payload) {
     return null
   }
 
+  const rawModelMetrics = raw.modelMetrics || raw.metricasModelo || {}
+
   return {
     id: String(raw.id || raw._id || ''),
     processNumber: raw.processNumber || '',
@@ -562,6 +577,19 @@ function mapCaseFromApi(payload) {
     dataOrigins: raw.dataOrigins || {},
     confidenceByBlock: raw.confidenceByBlock || {},
     decisionTrail: Array.isArray(raw.decisionTrail) ? raw.decisionTrail : [],
+    modelMetrics: {
+      taxaVitoriaPercent: toNullableNumber(rawModelMetrics.taxaVitoriaPercent),
+      incertezaPercent: toNullableNumber(rawModelMetrics.incertezaPercent),
+      valorAcordoProposto: toNullableNumber(rawModelMetrics.valorAcordoProposto),
+      probabilidadeAceiteAcordoPercent: toNullableNumber(rawModelMetrics.probabilidadeAceiteAcordoPercent),
+      custoTotalEsperadoAcordo: toNullableNumber(rawModelMetrics.custoTotalEsperadoAcordo),
+      expectativaPerda: toNullableNumber(rawModelMetrics.expectativaPerda),
+      custoDefesaEstimado: toNullableNumber(rawModelMetrics.custoDefesaEstimado),
+      economiaFinanceiraEstimada: toNullableNumber(rawModelMetrics.economiaFinanceiraEstimada),
+      decisaoSugerida: rawModelMetrics.decisaoSugerida || '',
+      expectativaResumo: rawModelMetrics.expectativaResumo || '',
+      fonte: rawModelMetrics.fonte || '',
+    },
   }
 }
 
@@ -619,6 +647,20 @@ export default function CaseDetailsScreen() {
     () => Boolean(caseData?.result?.publishedAt) || String(caseData?.result?.status || '') === 'validada',
     [caseData?.result?.publishedAt, caseData?.result?.status],
   )
+  const modelMetrics = caseData?.modelMetrics || {}
+  const suggestedAgreementForUi = useMemo(() => {
+    const recommendationValue = Number(aiRecommendation?.suggestedValue)
+    if (Number.isFinite(recommendationValue) && recommendationValue > 0) {
+      return recommendationValue
+    }
+
+    const modelValue = Number(modelMetrics?.valorAcordoProposto)
+    if (Number.isFinite(modelValue) && modelValue > 0) {
+      return modelValue
+    }
+
+    return null
+  }, [aiRecommendation?.suggestedValue, modelMetrics?.valorAcordoProposto])
 
   const chatContext = useMemo(
     () => ({
@@ -806,10 +848,21 @@ export default function CaseDetailsScreen() {
     setIsChatLoading(true)
 
     try {
+      const contractNumbers = []
+      const processNumberFromData = String(caseData?.processNumber || '').trim()
+      const processNumberFromLabel = String(requestContext.label || '').match(
+        /\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/
+      )?.[0]
+      const processNumber = processNumberFromData || processNumberFromLabel
+      if (processNumber) {
+        contractNumbers.push(String(processNumber).trim())
+      }
+
       const response = await sendChatMessage({
         message,
         history,
         context: requestContext,
+        contractNumbers,
       })
 
       const assistantReply = typeof response?.reply === 'string' ? response.reply.trim() : ''
@@ -981,6 +1034,12 @@ export default function CaseDetailsScreen() {
                   <Tag>Andamento no tribunal: {formatJudicialPhase(caseData.judicialPhase)}</Tag>
                   <Tag>UF {caseData.uf}</Tag>
                   <Tag>{caseData.processNumber || 'Sem numero'}</Tag>
+                  {Number.isFinite(Number(modelMetrics.taxaVitoriaPercent)) ? (
+                    <Tag>Taxa de vitoria: {formatPercent(modelMetrics.taxaVitoriaPercent)}</Tag>
+                  ) : null}
+                  {Number.isFinite(Number(modelMetrics.economiaFinanceiraEstimada)) ? (
+                    <Tag>Economia estimada: {formatCurrency(modelMetrics.economiaFinanceiraEstimada)}</Tag>
+                  ) : null}
                 </HeroMeta>
               </Hero>
 
@@ -1067,6 +1126,51 @@ export default function CaseDetailsScreen() {
                 <Card $span={6}>
                   <CardHeader>
                     <ShieldCheck size={15} />
+                    Metricas Preditivas
+                  </CardHeader>
+                  <DataList>
+                    <DataRow>
+                      <DataLabel>Taxa de vitoria</DataLabel>
+                      <DataValue>{formatPercent(modelMetrics.taxaVitoriaPercent)}</DataValue>
+                    </DataRow>
+                    <DataRow>
+                      <DataLabel>Valor de acordo proposto</DataLabel>
+                      <DataValue>
+                        {Number.isFinite(Number(modelMetrics.valorAcordoProposto))
+                          ? formatCurrency(modelMetrics.valorAcordoProposto)
+                          : 'Nao informado'}
+                      </DataValue>
+                    </DataRow>
+                    <DataRow>
+                      <DataLabel>Economia financeira estimada</DataLabel>
+                      <DataValue>
+                        {Number.isFinite(Number(modelMetrics.economiaFinanceiraEstimada))
+                          ? formatCurrency(modelMetrics.economiaFinanceiraEstimada)
+                          : 'Nao informado'}
+                      </DataValue>
+                    </DataRow>
+                    <DataRow>
+                      <DataLabel>Expectativa de perda</DataLabel>
+                      <DataValue>
+                        {Number.isFinite(Number(modelMetrics.expectativaPerda))
+                          ? formatCurrency(modelMetrics.expectativaPerda)
+                          : 'Nao informado'}
+                      </DataValue>
+                    </DataRow>
+                    <DataRow>
+                      <DataLabel>Probabilidade de aceite de acordo</DataLabel>
+                      <DataValue>{formatPercent(modelMetrics.probabilidadeAceiteAcordoPercent)}</DataValue>
+                    </DataRow>
+                    <DataRow>
+                      <DataLabel>Expectativa</DataLabel>
+                      <DataValue>{modelMetrics.expectativaResumo || 'Nao informado'}</DataValue>
+                    </DataRow>
+                  </DataList>
+                </Card>
+
+                <Card $span={6}>
+                  <CardHeader>
+                    <ShieldCheck size={15} />
                     Recomendacao de IA
                   </CardHeader>
                   {isRecommendationLoading ? (
@@ -1086,8 +1190,8 @@ export default function CaseDetailsScreen() {
                       <DataRow>
                         <DataLabel>Estimativa de valor sugerido</DataLabel>
                         <DataValue>
-                          {Number(aiRecommendation?.suggestedValue || 0) > 0
-                            ? formatCurrency(aiRecommendation?.suggestedValue)
+                          {Number.isFinite(Number(suggestedAgreementForUi)) && Number(suggestedAgreementForUi) > 0
+                            ? formatCurrency(suggestedAgreementForUi)
                             : 'Não informado'}
                         </DataValue>
                       </DataRow>
@@ -1422,6 +1526,3 @@ export default function CaseDetailsScreen() {
     </PageLayout>
   )
 }
-
-
-
