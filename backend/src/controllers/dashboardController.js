@@ -1,8 +1,16 @@
-﻿import Case from '../models/CaseModel.js'
+import Case from '../models/CaseModel.js'
 import User from '../models/UserModel.js'
 
+function normalizeText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+}
+
 function normalizeDecision(value) {
-  const normalized = String(value || '').toLowerCase().trim()
+  const normalized = normalizeText(value)
 
   if (!normalized) {
     return 'unknown'
@@ -26,6 +34,40 @@ function normalizeDecision(value) {
   }
 
   return 'unknown'
+}
+
+function getLatestTrailEntry(caseData) {
+  const trail = Array.isArray(caseData?.decisionTrail) ? caseData.decisionTrail : []
+  if (trail.length === 0) {
+    return null
+  }
+
+  return trail
+    .slice()
+    .sort((a, b) => new Date(b?.createdAt || 0).getTime() - new Date(a?.createdAt || 0).getTime())[0]
+}
+
+function extractModelDecision(caseData) {
+  const directDecision = normalizeDecision(caseData?.recommendation?.decision)
+  if (directDecision !== 'unknown') {
+    return directDecision
+  }
+
+  return normalizeDecision(getLatestTrailEntry(caseData)?.recommendationDecision)
+}
+
+function extractLawyerDecision(caseData) {
+  const directDecision = normalizeDecision(caseData?.result?.decisionTaken)
+  if (directDecision !== 'unknown') {
+    return directDecision
+  }
+
+  const resultStatus = normalizeText(caseData?.result?.status)
+  if (resultStatus.includes('pendente') || resultStatus.includes('ajuste') || resultStatus.includes('analise')) {
+    return 'pending'
+  }
+
+  return normalizeDecision(getLatestTrailEntry(caseData)?.lawyerDecision)
 }
 
 function isComparableDecision(modelDecision, lawyerDecision) {
@@ -71,6 +113,13 @@ export const getDashboardAnalytics = async (req, res) => {
             defense: 0,
             pendente: 0,
           },
+          eventMetrics: {
+            totalResponses: 0,
+            comparableResponses: 0,
+            followedModelResponses: 0,
+            divergedResponses: 0,
+            adherencePercentage: 0,
+          },
           lawyerMetrics: [],
         },
       })
@@ -80,6 +129,10 @@ export const getDashboardAnalytics = async (req, res) => {
     let comparedCases = 0
     let pendingCases = 0
     let totalMoneySaved = 0
+    let totalResponses = 0
+    let comparableResponses = 0
+    let followedModelResponses = 0
+    let divergedResponses = 0
 
     const lawyerStats = {}
 
@@ -104,8 +157,8 @@ export const getDashboardAnalytics = async (req, res) => {
       const stats = lawyerStats[lawyerId]
       stats.totalCases += 1
 
-      const modelDecision = normalizeDecision(caseData.recommendation?.decision)
-      const lawyerDecision = normalizeDecision(caseData.result?.decisionTaken)
+      const modelDecision = extractModelDecision(caseData)
+      const lawyerDecision = extractLawyerDecision(caseData)
 
       if (lawyerDecision === 'pending' || lawyerDecision === 'unknown') {
         pendingCases += 1
@@ -134,6 +187,31 @@ export const getDashboardAnalytics = async (req, res) => {
           stats.ignoredModel += 1
         }
       }
+
+      const decisionTrail = Array.isArray(caseData.decisionTrail) ? caseData.decisionTrail : []
+      decisionTrail.forEach((entry) => {
+        const entryType = normalizeText(entry?.type)
+        if (!entryType.includes('decisao_humana_validada')) {
+          return
+        }
+
+        totalResponses += 1
+
+        const modelAtEvent = normalizeDecision(entry?.recommendationDecision || caseData.recommendation?.decision)
+        const lawyerAtEvent = normalizeDecision(entry?.lawyerDecision)
+
+        if (!isComparableDecision(modelAtEvent, lawyerAtEvent)) {
+          return
+        }
+
+        comparableResponses += 1
+
+        if (modelAtEvent === lawyerAtEvent) {
+          followedModelResponses += 1
+        } else {
+          divergedResponses += 1
+        }
+      })
     })
 
     Object.keys(lawyerStats).forEach((lawyerId) => {
@@ -154,7 +232,7 @@ export const getDashboardAnalytics = async (req, res) => {
     }
 
     cases.forEach((caseData) => {
-      const lawyerDecision = normalizeDecision(caseData.result?.decisionTaken)
+      const lawyerDecision = extractLawyerDecision(caseData)
 
       if (lawyerDecision === 'acordo') {
         casesByDecision.acordo += 1
@@ -170,6 +248,8 @@ export const getDashboardAnalytics = async (req, res) => {
     })
 
     const adherencePercentage = comparedCases > 0 ? ((followedCount / comparedCases) * 100).toFixed(2) : '0.00'
+    const responseAdherencePercentage =
+      comparableResponses > 0 ? ((followedModelResponses / comparableResponses) * 100).toFixed(2) : '0.00'
 
     return res.status(200).json({
       success: true,
@@ -182,6 +262,13 @@ export const getDashboardAnalytics = async (req, res) => {
         totalMoneySaved: Number(totalMoneySaved.toFixed(2)),
         averageMoneyPerCase: cases.length > 0 ? Number((totalMoneySaved / cases.length).toFixed(2)) : 0,
         casesByDecision,
+        eventMetrics: {
+          totalResponses,
+          comparableResponses,
+          followedModelResponses,
+          divergedResponses,
+          adherencePercentage: Number(responseAdherencePercentage),
+        },
         lawyerMetrics,
       },
     })
@@ -199,11 +286,11 @@ export const getCaseComparisons = async (req, res) => {
   try {
     const cases = await Case.find()
       .populate('assignedLawyerId')
-      .select('processNumber subject macroResult recommendation result assignedLawyerId claimValue condemnationValue')
+      .select('processNumber subject macroResult recommendation result decisionTrail assignedLawyerId claimValue condemnationValue')
 
     const comparisons = cases.map((caseData) => {
-      const modelDecision = normalizeDecision(caseData.recommendation?.decision)
-      const lawyerDecision = normalizeDecision(caseData.result?.decisionTaken)
+      const modelDecision = extractModelDecision(caseData)
+      const lawyerDecision = extractLawyerDecision(caseData)
       const comparable = isComparableDecision(modelDecision, lawyerDecision)
       const matchesModel = comparable ? modelDecision === lawyerDecision : null
 
@@ -257,8 +344,8 @@ export const getLawyerPerformance = async (req, res) => {
         let totalMoneySaved = 0
 
         lawyerCases.forEach((caseData) => {
-          const modelDecision = normalizeDecision(caseData.recommendation?.decision)
-          const lawyerDecision = normalizeDecision(caseData.result?.decisionTaken)
+          const modelDecision = extractModelDecision(caseData)
+          const lawyerDecision = extractLawyerDecision(caseData)
 
           if (!isComparableDecision(modelDecision, lawyerDecision)) {
             return

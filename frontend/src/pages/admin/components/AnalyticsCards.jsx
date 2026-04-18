@@ -77,7 +77,6 @@ function AnalyticsCards({ data }) {
   }
 
   const comparedCases = data.comparedCases || 0
-
   return (
     <CardsContainer>
       <Card>

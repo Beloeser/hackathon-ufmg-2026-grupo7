@@ -615,6 +615,10 @@ export default function CaseDetailsScreen() {
   const [publishSuccess, setPublishSuccess] = useState('')
 
   const parsedSummary = useMemo(() => parseCaseSummary(caseSummary), [caseSummary])
+  const isLawyerDecisionLocked = useMemo(
+    () => Boolean(caseData?.result?.publishedAt) || String(caseData?.result?.status || '') === 'validada',
+    [caseData?.result?.publishedAt, caseData?.result?.status],
+  )
 
   const chatContext = useMemo(
     () => ({
@@ -873,6 +877,9 @@ export default function CaseDetailsScreen() {
   }
 
   const handleSelectDecision = (decision) => {
+    if (isLawyerDecisionLocked) {
+      return
+    }
     setSelectedDecision(decision)
     setPublishError('')
     setPublishSuccess('')
@@ -883,6 +890,11 @@ export default function CaseDetailsScreen() {
 
   const handlePublishResult = async () => {
     if (isPublishing || !caseData) {
+      return
+    }
+
+    if (isLawyerDecisionLocked) {
+      setPublishError('Este processo ja possui resposta registrada. So e permitido 1 envio por processo.')
       return
     }
 
@@ -1117,6 +1129,7 @@ export default function CaseDetailsScreen() {
                   <DecisionRow>
                     <DecisionButton
                       type="button"
+                      disabled={isLawyerDecisionLocked}
                       $active={selectedDecision === 'acordo'}
                       onClick={() => handleSelectDecision('acordo')}
                     >
@@ -1124,6 +1137,7 @@ export default function CaseDetailsScreen() {
                     </DecisionButton>
                     <DecisionButton
                       type="button"
+                      disabled={isLawyerDecisionLocked}
                       $active={selectedDecision === 'defesa'}
                       onClick={() => handleSelectDecision('defesa')}
                     >
@@ -1136,6 +1150,7 @@ export default function CaseDetailsScreen() {
                       <FieldLabel>Valor do acordo</FieldLabel>
                       <TextInput
                         type="number"
+                        disabled={isLawyerDecisionLocked}
                         min="0"
                         step="0.01"
                       placeholder="Ex.: 7500"
@@ -1148,16 +1163,21 @@ export default function CaseDetailsScreen() {
                   <FieldBlock>
                     <FieldLabel>Justifique a escolha para publicar/finalizar</FieldLabel>
                     <TextArea
+                      disabled={isLawyerDecisionLocked}
                       placeholder="Explique resumidamente o porquê da escolha."
                       value={publishReason}
                       onChange={(event) => setPublishReason(event.target.value)}
                     />
                   </FieldBlock>
 
-                  <PublishButton type="button" onClick={handlePublishResult} disabled={isPublishing}>
+                  <PublishButton type="button" onClick={handlePublishResult} disabled={isPublishing || isLawyerDecisionLocked}>
                     {isPublishing ? <AlertCircle size={16} /> : <CheckCircle2 size={16} />}
-                    {isPublishing ? 'Publicando...' : 'Publicar / Finalizar Resultado'}
+                    {isPublishing ? 'Publicando...' : isLawyerDecisionLocked ? 'Resposta ja registrada' : 'Publicar / Finalizar Resultado'}
                   </PublishButton>
+
+                  {isLawyerDecisionLocked ? (
+                    <Feedback>Este processo ja foi respondido pelo advogado e nao permite novo envio.</Feedback>
+                  ) : null}
 
                   {publishError ? <Feedback $error>{publishError}</Feedback> : null}
                   {publishSuccess ? <Feedback>{publishSuccess}</Feedback> : null}

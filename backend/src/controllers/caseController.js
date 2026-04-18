@@ -767,6 +767,17 @@ export const finalizeCaseDecision = async (req, res) => {
       })
     }
 
+    const alreadyPublished =
+      Boolean(caseItem?.result?.publishedAt) ||
+      String(caseItem?.result?.status || '').toLowerCase().trim() === 'validada'
+
+    if (alreadyPublished) {
+      return res.status(409).json({
+        success: false,
+        message: 'Este processo ja possui resposta do advogado registrada. So e permitido 1 envio por processo.',
+      })
+    }
+
     const finalValue = decision === 'acordo' ? agreementValueRaw : 0
     const publishedAt = new Date()
 

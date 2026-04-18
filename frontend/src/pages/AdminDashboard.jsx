@@ -111,27 +111,62 @@ function AdminDashboard() {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    const fetchDashboardData = async () => {
+    let isMounted = true
+
+    const fetchDashboardData = async ({ silent = false } = {}) => {
       try {
-        setLoading(true)
-        setError(null)
+        if (!silent && isMounted) {
+          setLoading(true)
+        }
+        if (isMounted) {
+          setError(null)
+        }
 
         const [analytics, comparisons] = await Promise.all([
           getDashboardAnalytics(),
           getCaseComparisons(),
         ])
 
+        if (!isMounted) {
+          return
+        }
+
         setAnalyticsData(analytics.data)
         setComparisonsData(comparisons.data)
       } catch (err) {
+        if (!isMounted) {
+          return
+        }
         console.error('Error fetching dashboard data:', err)
         setError('Erro ao carregar dados do dashboard. Tente novamente.')
       } finally {
-        setLoading(false)
+        if (isMounted) {
+          setLoading(false)
+        }
       }
     }
 
     fetchDashboardData()
+
+    const intervalId = window.setInterval(() => {
+      fetchDashboardData({ silent: true })
+    }, 10000)
+
+    const refreshOnFocus = () => {
+      if (document.visibilityState === 'visible') {
+        fetchDashboardData({ silent: true })
+      }
+    }
+
+    window.addEventListener('focus', refreshOnFocus)
+    document.addEventListener('visibilitychange', refreshOnFocus)
+
+    return () => {
+      isMounted = false
+      window.clearInterval(intervalId)
+      window.removeEventListener('focus', refreshOnFocus)
+      document.removeEventListener('visibilitychange', refreshOnFocus)
+    }
   }, [])
 
   if (loading) {
