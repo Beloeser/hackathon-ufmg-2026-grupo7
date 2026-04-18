@@ -1,5 +1,5 @@
 import express from 'express'
-import { login } from '../controllers/authController.js'
+import authRoutes from './authRoutes.js'
 import {
   analisarContratoSelecionado,
   listarContratosEmAndamento,
@@ -7,7 +7,7 @@ import {
 
 const router = express.Router()
 
-router.post('/login', login)
+router.use('/', authRoutes)
 router.get('/analise/contratos-em-andamento', listarContratosEmAndamento)
 router.post('/analise/analisar-contrato', analisarContratoSelecionado)
 
