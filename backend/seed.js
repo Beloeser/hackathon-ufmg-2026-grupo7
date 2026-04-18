@@ -1,419 +1,331 @@
 import dotenv from 'dotenv'
+import fs from 'fs/promises'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import connectDB from './src/config/db.js'
 import User from './src/models/UserModel.js'
 import Case from './src/models/CaseModel.js'
 
 dotenv.config()
 
-const now = new Date('2026-04-18T10:00:00.000Z')
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const PROCESSOS_EM_ANDAMENTO_CSV = path.resolve(
+  __dirname,
+  '..',
+  'db',
+  'processed',
+  'processos_em_andamento.csv'
+)
 
 const sampleUsers = [
   {
-    email: 'maria.silva@escritorio.com',
+    email: 'maria.silva@coffeebreakers.local',
     password: 'senha123',
     name: 'Maria Silva',
     role: 'advogado',
   },
   {
-    email: 'joao.santos@escritorio.com',
+    email: 'joao.santos@coffeebreakers.local',
     password: 'adv2024',
     name: 'Joao Santos',
     role: 'advogado',
   },
   {
-    email: 'ana.costa@escritorio.com',
+    email: 'ana.costa@coffeebreakers.local',
     password: 'demo456',
     name: 'Ana Costa',
     role: 'admin',
   },
+]
+
+const LEGACY_SAMPLE_PROCESS_NUMBERS = [
+  '1764352-89.2025.8.06.1818',
+  '1764353-90.2025.8.05.0001',
+  '1764354-01.2025.8.07.0002',
+  '1764355-12.2025.8.26.0003',
+  '1764356-23.2025.8.16.0004',
+]
+
+const EXTRA_SAMPLE_CASES = [
   {
-    email: 'admin@escritorio.com',
-    password: 'admin',
-    name: 'AdminAdmin',
-    role: 'admin',
+    processNumber: '5001200-11.2026.8.26.0100',
+    uf: 'SP',
+    subject: 'Execucao fiscal',
+    subSubject: 'ICMS',
+    macroResult: 'Em andamento',
+    microResult: 'Analise documental',
+    claimValue: 185000,
+    condemnationValue: 124000,
+    status: 'em_andamento',
+    internalStatus: 'em_analise',
+    judicialStatus: 'nao_confirmado',
+    judicialPhase: 'citacao pendente',
+    actionClass: 'cobranca',
+    clientRole: 'reu',
+    suggestedThesis: 'prescricao intercorrente e excesso de execucao',
+  },
+  {
+    processNumber: '3004501-67.2026.8.19.0001',
+    uf: 'RJ',
+    subject: 'Responsabilidade civil',
+    subSubject: 'Dano moral',
+    macroResult: 'Em andamento',
+    microResult: 'Audiencia designada',
+    claimValue: 60000,
+    condemnationValue: 25000,
+    status: 'em_andamento',
+    internalStatus: 'aguardando_audiencia',
+    judicialStatus: 'nao_confirmado',
+    judicialPhase: 'instrucao',
+    actionClass: 'indenizatoria',
+    clientRole: 'reu',
+    suggestedThesis: 'inexistencia de ato ilicito e ausencia de nexo causal',
+  },
+  {
+    processNumber: '7003322-54.2026.8.05.0001',
+    uf: 'BA',
+    subject: 'Direito do consumidor',
+    subSubject: 'Cobranca indevida',
+    macroResult: 'Em andamento',
+    microResult: 'Contestacao apresentada',
+    claimValue: 12000,
+    condemnationValue: 6500,
+    status: 'em_andamento',
+    internalStatus: 'em_analise',
+    judicialStatus: 'nao_confirmado',
+    judicialPhase: 'contestacao apresentada',
+    actionClass: 'indenizatoria',
+    clientRole: 'reu',
+    suggestedThesis: 'regularidade da cobranca e boa-fe objetiva',
+  },
+  {
+    processNumber: '8102201-09.2026.8.13.0001',
+    uf: 'MG',
+    subject: 'Trabalhista',
+    subSubject: 'Verbas rescisorias',
+    macroResult: 'Em andamento',
+    microResult: 'Provas em producao',
+    claimValue: 98000,
+    condemnationValue: 41000,
+    status: 'em_andamento',
+    internalStatus: 'em_analise',
+    judicialStatus: 'nao_confirmado',
+    judicialPhase: 'instrucao',
+    actionClass: 'geral',
+    clientRole: 'reu',
+    suggestedThesis: 'quitacao e adimplemento regular de verbas',
   },
 ]
 
-function buildOrigins(updatedAt, recommendationAt, lawyerDecisionAt) {
+const PROCESS_NUMBER_REGEX = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/
+
+function normalizeHeader(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function parseCsvLine(line) {
+  const values = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i]
+    const nextChar = line[i + 1]
+
+    if (char === '"' && inQuotes && nextChar === '"') {
+      current += '"'
+      i += 1
+      continue
+    }
+
+    if (char === '"') {
+      inQuotes = !inQuotes
+      continue
+    }
+
+    if (char === ',' && !inQuotes) {
+      values.push(current)
+      current = ''
+      continue
+    }
+
+    current += char
+  }
+
+  values.push(current)
+  return values
+}
+
+function toNumberOrZero(value) {
+  const normalized = String(value ?? '').replace(/\./g, '').replace(',', '.').trim()
+  const parsed = Number.parseFloat(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+function inferActionClass(subject, subSubject) {
+  const merged = `${subject || ''} ${subSubject || ''}`.toLowerCase()
+
+  if (merged.includes('bancario') || merged.includes('juros')) {
+    return 'revisional_bancaria'
+  }
+
+  if (merged.includes('fiscal') || merged.includes('execucao') || merged.includes('cobranca')) {
+    return 'cobranca'
+  }
+
+  if (merged.includes('indeniz') || merged.includes('dano')) {
+    return 'indenizatoria'
+  }
+
+  return 'geral'
+}
+
+function parseCsvRecords(rawCsv) {
+  const lines = rawCsv.split(/\r?\n/).filter((line) => line.trim().length > 0)
+
+  if (lines.length < 2) {
+    return []
+  }
+
+  const headers = parseCsvLine(lines[0].replace(/^\uFEFF/, '')).map(normalizeHeader)
+
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line)
+    const record = {}
+
+    headers.forEach((header, index) => {
+      record[header] = String(values[index] ?? '').trim()
+    })
+
+    return record
+  })
+}
+
+function buildCaseFromCsvRow(row) {
+  const processNumber = String(row.numero_do_processo || '').trim()
+  const uf = String(row.uf || '').trim().toUpperCase()
+  const subject = String(row.assunto || '').trim()
+  const subSubject = String(row.sub_assunto || '').trim()
+
+  if (!PROCESS_NUMBER_REGEX.test(processNumber) || !uf || !subject) {
+    return null
+  }
+
+  const actionClass = inferActionClass(subject, subSubject)
+
   return {
-    judicialPhase: {
-      source: 'importado do tribunal',
-      updatedAt,
-    },
-    internalStatus: {
-      source: 'informado pela equipe',
-      updatedAt,
-    },
-    recommendation: {
-      source: 'estimado automaticamente',
-      updatedAt: recommendationAt,
-    },
-    lawyerDecision: {
-      source: 'informado pelo advogado',
-      updatedAt: lawyerDecisionAt,
-    },
-    financialEstimate: {
-      source: 'calculado com base nos documentos anexados',
-      updatedAt,
-    },
+    processNumber,
+    uf,
+    subject,
+    subSubject,
+    macroResult: String(row.resultado_macro || 'Em andamento').trim(),
+    microResult: String(row.resultado_micro || 'Em andamento').trim(),
+    claimValue: toNumberOrZero(row.valor_da_causa),
+    condemnationValue: toNumberOrZero(row.valor_da_condenacao_indenizacao),
+    status: 'em_andamento',
+    internalStatus: 'em_analise',
+    judicialStatus: 'nao_confirmado',
+    judicialPhase: 'fase processual nao confirmada',
+    actionClass,
+    clientRole: 'autor',
   }
 }
 
-const sampleCases = [
-  {
-    processNumber: '1865001-11.2026.8.12.0001',
-    uf: 'MS',
-    subject: 'Bancario',
-    subSubject: 'Juros abusivos',
-    macroResult: 'Procedente em parte',
-    microResult: 'Recalculo contratual',
-    claimValue: 28600,
-    condemnationValue: 11900,
-    status: 'decisao_validada',
-    judicialStatus: 'fase_revisional_confirmada',
-    judicialPhase: 'instrução',
-    internalStatus: 'decisao_validada',
-    actionClass: 'revisional_bancaria',
-    clientRole: 'autor',
-    suggestedThesis: 'manter tese revisional',
-    actionContext: {
-      contractReference: 'CONTR-2024-9917',
-      contractedRate: 3.19,
-      marketRate: 2.08,
-      hasCapitalization: true,
-      mainClaim: 'revisao de encargos e exclusao de juros acima da taxa media',
-      urgencyReliefRequested: true,
-      causeValueCriteria: 'diferenca estimada entre evolucao contratual e evolucao revisada',
-    },
-    recommendation: {
-      decision: 'acordo',
-      suggestedValue: 11000,
-      confidence: 0.73,
-      reasoning:
-        'Prova documental indica chance relevante de revisao parcial e composicao em faixa segura para mitigar risco financeiro.',
-      status: 'preliminar',
-      generatedAt: new Date('2026-04-10T14:00:00.000Z'),
-      disclaimer: 'Esta e uma sugestao automatizada e nao substitui validacao do advogado responsavel.',
-    },
-    result: {
-      decisionTaken: 'acordo',
-      status: 'validada',
-      finalValue: 10850,
-      outcome: 'finalizado_pelo_advogado',
-      effective: true,
-      justification: 'A faixa de acordo ficou aderente a memoria de calculo revisional e evitou litigio prolongado.',
-      publishedAt: new Date('2026-04-14T16:10:00.000Z'),
-    },
-    financialEstimate: {
-      label: 'Proveito economico estimado',
-      estimatedValue: 11900,
-      uncertaintyMin: 9500,
-      uncertaintyMax: 13000,
-      calculationBase: 'Revisao de encargos remuneratorios e exclusao de juros acima da taxa media BACEN.',
-      methodology: 'Cenario otimista/base/conservador com memoria de calculo anexada pelo perito contabil.',
-      documentsUsed: ['contrato_cedula_credito.pdf', 'planilha_evolucao_debito.xlsx', 'laudo_preliminar_contabil.pdf'],
-    },
-    consistencyIssues: [],
-    terminologyAlerts: [],
-    decisionTrail: [
-      {
-        type: 'recomendacao_inicial',
-        actor: 'sistema',
-        reason: 'Sugestao automatizada inicial com base no historico e documentos anexados.',
-        recommendationDecision: 'acordo',
-        recommendationConfidence: 0.73,
-        lawyerDecision: '',
-        createdAt: new Date('2026-04-10T14:00:00.000Z'),
-      },
-      {
-        type: 'decisao_humana_validada',
-        actor: 'advogado',
-        reason: 'Acordo alinhado ao risco financeiro e estrategia de encerramento eficiente.',
-        recommendationDecision: 'acordo',
-        recommendationConfidence: 0.73,
-        lawyerDecision: 'acordo',
-        createdAt: new Date('2026-04-14T16:10:00.000Z'),
-      },
-    ],
-    metadata: {
-      origins: buildOrigins(
-        new Date('2026-04-12T11:20:00.000Z'),
-        new Date('2026-04-10T14:00:00.000Z'),
-        new Date('2026-04-14T16:10:00.000Z'),
-      ),
-      confidenceByBlock: {
-        subjectClassification: 0.88,
-        financialEstimate: 0.81,
-        judicialPhase: 0.86,
-        suggestedThesis: 0.79,
-      },
-    },
-  },
-  {
-    processNumber: '1865002-22.2026.8.26.0002',
-    uf: 'SP',
-    subject: 'Dano moral',
-    subSubject: 'Negativacao indevida',
-    macroResult: 'Procedente',
-    microResult: 'Condenacao em danos morais',
-    claimValue: 22000,
-    condemnationValue: 12000,
-    status: 'decisao_validada',
-    judicialStatus: 'fase_recursal_confirmada',
-    judicialPhase: 'recurso',
-    internalStatus: 'decisao_validada',
-    actionClass: 'indenizatoria',
-    clientRole: 'autor',
-    suggestedThesis: 'sustentar dano moral com foco em prova documental de negativacao',
-    recommendation: {
-      decision: 'defesa',
-      suggestedValue: 0,
-      confidence: 0.7,
-      reasoning: 'A tese probatoria e robusta para manutencao da estrategia litigiosa ate julgamento recursal.',
-      status: 'preliminar',
-      generatedAt: new Date('2026-04-09T10:30:00.000Z'),
-      disclaimer: 'Esta e uma sugestao automatizada e nao substitui validacao do advogado responsavel.',
-    },
-    result: {
-      decisionTaken: 'defesa',
-      status: 'validada',
-      finalValue: 0,
-      outcome: 'estrategia_litigiosa_mantida',
-      effective: true,
-      justification: 'A defesa foi mantida por aderencia integral entre provas e jurisprudencia local.',
-      publishedAt: new Date('2026-04-13T15:00:00.000Z'),
-    },
-    financialEstimate: {
-      label: 'Indenizacao estimada',
-      estimatedValue: 12000,
-      uncertaintyMin: 9800,
-      uncertaintyMax: 13800,
-      calculationBase: 'Jurisprudencia regional para negativacao indevida e parametros de dano moral por faixa de impacto.',
-      methodology: 'Modelagem por precedentes similares com ajuste por tempo de restricao e dano comprovado.',
-      documentsUsed: ['consulta_serasa.pdf', 'comprovante_quitacao.pdf', 'peticao_inicial.pdf'],
-    },
-    consistencyIssues: [],
-    terminologyAlerts: [],
-    decisionTrail: [
-      {
-        type: 'recomendacao_inicial',
-        actor: 'sistema',
-        reason: 'Manter estrategia de defesa recursal.',
-        recommendationDecision: 'defesa',
-        recommendationConfidence: 0.7,
-        lawyerDecision: '',
-        createdAt: new Date('2026-04-09T10:30:00.000Z'),
-      },
-      {
-        type: 'decisao_humana_validada',
-        actor: 'advogado',
-        reason: 'Defesa validada pela consistencia probatoria e fase recursal.',
-        recommendationDecision: 'defesa',
-        recommendationConfidence: 0.7,
-        lawyerDecision: 'defesa',
-        createdAt: new Date('2026-04-13T15:00:00.000Z'),
-      },
-    ],
-    metadata: {
-      origins: buildOrigins(
-        new Date('2026-04-12T09:10:00.000Z'),
-        new Date('2026-04-09T10:30:00.000Z'),
-        new Date('2026-04-13T15:00:00.000Z'),
-      ),
-      confidenceByBlock: {
-        subjectClassification: 0.9,
-        financialEstimate: 0.77,
-        judicialPhase: 0.83,
-        suggestedThesis: 0.76,
-      },
-    },
-  },
-  {
-    processNumber: '1865003-33.2026.8.19.0003',
-    uf: 'RJ',
-    subject: 'Recuperacao de credito',
-    subSubject: 'Duplicata mercantil',
-    macroResult: 'Exito',
-    microResult: 'Acordo homologado',
-    claimValue: 45800,
-    condemnationValue: 0,
-    status: 'encerrado',
-    judicialStatus: 'transito_em_julgado',
-    judicialPhase: 'sentença',
-    internalStatus: 'encerrado',
-    actionClass: 'cobranca',
-    clientRole: 'autor',
-    suggestedThesis: 'encerramento com baixa apos cumprimento integral',
-    recommendation: {
-      decision: 'acordo',
-      suggestedValue: 45200,
-      confidence: 0.82,
-      reasoning: 'A composicao integral era o melhor caminho de recuperacao com menor tempo de ciclo.',
-      status: 'preliminar',
-      generatedAt: new Date('2026-04-02T13:40:00.000Z'),
-      disclaimer: 'Esta e uma sugestao automatizada e nao substitui validacao do advogado responsavel.',
-    },
-    result: {
-      decisionTaken: 'acordo',
-      status: 'validada',
-      finalValue: 45800,
-      outcome: 'encerrado_com_exito',
-      effective: true,
-      justification: 'Pagamento integral comprovado e homologacao sem pendencias residuais.',
-      publishedAt: new Date('2026-04-11T18:20:00.000Z'),
-    },
-    financialEstimate: {
-      label: 'Valor recuperavel estimado',
-      estimatedValue: 45200,
-      uncertaintyMin: 43000,
-      uncertaintyMax: 45800,
-      calculationBase: 'Historico de adimplemento do devedor e prova documental da duplicata.',
-      methodology: 'Modelo de recuperacao por faixa de risco com cenarios de acordo e execucao.',
-      documentsUsed: ['duplicata_mercantil.pdf', 'demonstrativo_atualizacao.xlsx', 'acordo_homologado.pdf'],
-    },
-    consistencyIssues: [],
-    terminologyAlerts: [],
-    decisionTrail: [
-      {
-        type: 'recomendacao_inicial',
-        actor: 'sistema',
-        reason: 'Acordo recomendado para maximizar recuperacao em menor prazo.',
-        recommendationDecision: 'acordo',
-        recommendationConfidence: 0.82,
-        lawyerDecision: '',
-        createdAt: new Date('2026-04-02T13:40:00.000Z'),
-      },
-      {
-        type: 'decisao_humana_validada',
-        actor: 'advogado',
-        reason: 'Acordo homologado e cumprido integralmente.',
-        recommendationDecision: 'acordo',
-        recommendationConfidence: 0.82,
-        lawyerDecision: 'acordo',
-        createdAt: new Date('2026-04-11T18:20:00.000Z'),
-      },
-    ],
-    metadata: {
-      origins: buildOrigins(
-        new Date('2026-04-11T18:20:00.000Z'),
-        new Date('2026-04-02T13:40:00.000Z'),
-        new Date('2026-04-11T18:20:00.000Z'),
-      ),
-      confidenceByBlock: {
-        subjectClassification: 0.86,
-        financialEstimate: 0.84,
-        judicialPhase: 0.91,
-        suggestedThesis: 0.81,
-      },
-    },
-  },
-  {
-    processNumber: '1865004-44.2026.8.03.0004',
-    uf: 'AP',
-    subject: 'Execucao fiscal',
-    subSubject: 'ISS',
-    macroResult: 'Nao exito',
-    microResult: 'Risco de penhora',
-    claimValue: 86300,
-    condemnationValue: 51200,
-    status: 'estrategia_revisada',
-    judicialStatus: 'fase_executiva_confirmada',
-    judicialPhase: 'instrução',
-    internalStatus: 'estrategia_revisada',
-    actionClass: 'cobranca',
-    clientRole: 'reu',
-    suggestedThesis: 'parcelamento com garantia para evitar constricao imediata',
-    recommendation: {
-      decision: 'acordo',
-      suggestedValue: 48000,
-      confidence: 0.69,
-      reasoning: 'Composicao com parcelamento reduz risco de atos executivos gravosos.',
-      status: 'preliminar',
-      generatedAt: new Date('2026-04-08T09:00:00.000Z'),
-      disclaimer: 'Esta e uma sugestao automatizada e nao substitui validacao do advogado responsavel.',
-    },
-    result: {
-      decisionTaken: 'acordo',
-      status: 'validada',
-      finalValue: 47600,
-      outcome: 'parcelamento_formalizado',
-      effective: true,
-      justification: 'Parcelamento formalizado dentro da capacidade financeira e com suspensao de atos executivos.',
-      publishedAt: new Date('2026-04-15T12:45:00.000Z'),
-    },
-    financialEstimate: {
-      label: 'Risco estimado de condenacao',
-      estimatedValue: 51200,
-      uncertaintyMin: 47000,
-      uncertaintyMax: 54000,
-      calculationBase: 'Debito executado, acrescimos legais e historico de deferimento de medidas constritivas.',
-      methodology: 'Cenario de risco financeiro em execucao fiscal com simulacao de parcelamento.',
-      documentsUsed: ['cda.pdf', 'extrato_debito_fiscal.pdf', 'minuta_parcelamento.pdf'],
-    },
-    consistencyIssues: [],
-    terminologyAlerts: [],
-    decisionTrail: [
-      {
-        type: 'recomendacao_inicial',
-        actor: 'sistema',
-        reason: 'Composicao recomendada para reduzir risco de penhora.',
-        recommendationDecision: 'acordo',
-        recommendationConfidence: 0.69,
-        lawyerDecision: '',
-        createdAt: new Date('2026-04-08T09:00:00.000Z'),
-      },
-      {
-        type: 'decisao_humana_validada',
-        actor: 'advogado',
-        reason: 'Parcelamento validado com suspensao de atos executivos.',
-        recommendationDecision: 'acordo',
-        recommendationConfidence: 0.69,
-        lawyerDecision: 'acordo',
-        createdAt: new Date('2026-04-15T12:45:00.000Z'),
-      },
-    ],
-    metadata: {
-      origins: buildOrigins(
-        new Date('2026-04-15T12:45:00.000Z'),
-        new Date('2026-04-08T09:00:00.000Z'),
-        new Date('2026-04-15T12:45:00.000Z'),
-      ),
-      confidenceByBlock: {
-        subjectClassification: 0.84,
-        financialEstimate: 0.8,
-        judicialPhase: 0.79,
-        suggestedThesis: 0.75,
-      },
-    },
-  },
-]
+async function loadSampleCasesFromCsv() {
+  const rawCsv = await fs.readFile(PROCESSOS_EM_ANDAMENTO_CSV, 'utf8')
+  const rows = parseCsvRecords(rawCsv)
+  return rows.map(buildCaseFromCsvRow).filter(Boolean)
+}
+
+function dedupeCasesByProcessNumber(cases) {
+  const seen = new Set()
+  const deduped = []
+
+  for (const caseData of cases) {
+    const processNumber = String(caseData?.processNumber || '').trim()
+    if (!processNumber || seen.has(processNumber)) {
+      continue
+    }
+
+    seen.add(processNumber)
+    deduped.push(caseData)
+  }
+
+  return deduped
+}
 
 const runSeed = async () => {
   await connectDB()
 
-  try {
-    console.log('Limpando colecoes de usuarios e processos...')
-    await Promise.all([User.deleteMany({}), Case.deleteMany({})])
+  const csvCases = await loadSampleCasesFromCsv()
+  const sampleCases = dedupeCasesByProcessNumber([...csvCases, ...EXTRA_SAMPLE_CASES])
 
-    const users = await User.insertMany(sampleUsers)
-    console.log(`Usuarios inseridos: ${users.length}`)
-
-    const casesWithOwners = sampleCases.map((caseData, index) => ({
-      ...caseData,
-      assignedLawyerId: users[index % 2]._id,
-      createdAt: new Date(now.getTime() - (index + 3) * 86400000),
-      updatedAt: new Date(now.getTime() - index * 3600000),
-    }))
-
-    const createdCases = await Case.insertMany(casesWithOwners)
-    console.log(`Processos inseridos: ${createdCases.length}`)
-
-    console.log('Reset concluido: banco limpo e populado com exemplos completos sem pendencias.')
-    process.exit(0)
-  } catch (error) {
-    console.error('Falha ao executar seed de reset:', error)
-    process.exit(1)
+  if (sampleCases.length === 0) {
+    throw new Error(`Nenhum processo valido encontrado em ${PROCESSOS_EM_ANDAMENTO_CSV}.`)
   }
+
+  const removedLegacy = await Case.deleteMany({
+    processNumber: { $in: LEGACY_SAMPLE_PROCESS_NUMBERS },
+  })
+
+  if (removedLegacy.deletedCount > 0) {
+    console.log(`Removidos ${removedLegacy.deletedCount} processos legados do seed antigo.`)
+  }
+
+  const createdUsers = []
+  let createdUsersCount = 0
+
+  for (const userData of sampleUsers) {
+    let user = await User.findOne({ email: userData.email })
+
+    if (!user) {
+      user = await User.create(userData)
+      createdUsersCount += 1
+      console.log(`Usuario criado: ${user.email}`)
+    }
+
+    createdUsers.push(user)
+  }
+
+  let insertedCases = 0
+  let skippedCases = 0
+
+  for (let index = 0; index < sampleCases.length; index += 1) {
+    const caseData = sampleCases[index]
+    const existingCase = await Case.findOne({ processNumber: caseData.processNumber }).select('_id')
+
+    if (existingCase) {
+      skippedCases += 1
+      continue
+    }
+
+    const assignedLawyer = createdUsers[index % createdUsers.length]
+
+    await Case.create({
+      ...caseData,
+      assignedLawyerId: assignedLawyer?._id || null,
+    })
+
+    insertedCases += 1
+  }
+
+  console.log(`Usuarios existentes/criados: ${createdUsers.length} (novos: ${createdUsersCount})`)
+  console.log(`Processos carregados do CSV + extras: ${sampleCases.length}`)
+  console.log(`Processos inseridos: ${insertedCases}`)
+  console.log(`Processos ja existentes (nao inseridos): ${skippedCases}`)
+  console.log('Seed finalizada com sucesso.')
+
+  process.exit(0)
 }
 
-runSeed()
+runSeed().catch((error) => {
+  console.error('Falha ao executar seed:', error)
+  process.exit(1)
+})

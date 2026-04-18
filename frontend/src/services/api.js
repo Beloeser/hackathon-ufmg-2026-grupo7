@@ -9,8 +9,38 @@ const api = axios.create({
   },
 })
 
-export async function sendChatMessage({ message, history = [], context = null }) {
-  const response = await api.post('/chat', { message, history, context })
+export async function sendChatMessage({
+  message,
+  history = [],
+  context = null,
+  contractNumbers = [],
+  processNumbers = [],
+  contractInputs = [],
+  contratosCsv,
+}) {
+  const payload = {
+    message,
+    history,
+    context,
+  }
+
+  const mergedProcessNumbers = Array.from(
+    new Set([...contractNumbers, ...processNumbers].map((value) => String(value || '').trim()).filter(Boolean))
+  )
+
+  if (mergedProcessNumbers.length > 0) {
+    payload.contractNumbers = mergedProcessNumbers
+  }
+
+  if (Array.isArray(contractInputs) && contractInputs.length > 0) {
+    payload.contractInputs = contractInputs
+  }
+
+  if (typeof contratosCsv === 'string' && contratosCsv.trim()) {
+    payload.contratosCsv = contratosCsv.trim()
+  }
+
+  const response = await api.post('/chat', payload)
   return response.data
 }
 

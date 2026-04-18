@@ -6,6 +6,7 @@ import {
   analisarContratoSelecionado,
   listarContratosEmAndamento,
 } from '../controllers/analiseController.js'
+import { postChatMessage } from '../controllers/chatController.js'
 import {
   getDashboardAnalytics,
   getCaseComparisons,
@@ -20,6 +21,7 @@ router.use('/cases', caseRoutes)
 router.use('/chat', chatRoutes)
 router.get('/analise/contratos-em-andamento', listarContratosEmAndamento)
 router.post('/analise/analisar-contrato', analisarContratoSelecionado)
+router.post('/chat', postChatMessage)
 
 // Admin Dashboard Routes
 router.get('/admin/dashboard/analytics', getDashboardAnalytics)

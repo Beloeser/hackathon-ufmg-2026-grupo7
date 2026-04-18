@@ -8,13 +8,8 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
-from sklearn.gaussian_process import GaussianProcessRegressor
-from sklearn.gaussian_process.kernels import RBF, ConstantKernel as C, WhiteKernel
-from sklearn.metrics import (
-    accuracy_score,
-    brier_score_loss,
-    roc_auc_score,
-)
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import accuracy_score, brier_score_loss, roc_auc_score
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OrdinalEncoder, StandardScaler
@@ -47,12 +42,9 @@ def _load_dataset(path: str, sheet: str) -> pd.DataFrame:
         return pd.read_csv(path)
     if lower_path.endswith(".xlsx") or lower_path.endswith(".xls"):
         return pd.read_excel(path, sheet_name=sheet, engine="openpyxl")
-    raise ValueError(
-        f"Formato de entrada não suportado: {path}. Use .csv, .xlsx ou .xls."
-    )
+    raise ValueError(f"Formato de entrada nao suportado: {path}. Use .csv, .xlsx ou .xls.")
 
 
-# Colunas binárias de subsídio na planilha merge; a feature usada no modelo é só a soma.
 SUBSIDIO_COLUMNS = [
     "Contrato",
     "Extrato",
@@ -65,11 +57,19 @@ SUBSIDIO_COLUMNS = [
 
 def _add_quantidade_subsidios(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
+
+    if "Comprovante de crédito" not in out.columns and "Comprovante de credito" in out.columns:
+        out["Comprovante de crédito"] = out["Comprovante de credito"]
+    if "Dossiê" not in out.columns and "Dossie" in out.columns:
+        out["Dossiê"] = out["Dossie"]
+    if "Demonstrativo de evolução da dívida" not in out.columns and "Demonstrativo de evolucao da divida" in out.columns:
+        out["Demonstrativo de evolução da dívida"] = out["Demonstrativo de evolucao da divida"]
+
     missing = [c for c in SUBSIDIO_COLUMNS if c not in out.columns]
     if missing:
-        raise KeyError(f"Colunas de subsídio ausentes para contar: {missing}")
+        raise KeyError(f"Colunas de subsidio ausentes para contar: {missing}")
+
     mat = out[SUBSIDIO_COLUMNS].apply(pd.to_numeric, errors="coerce").fillna(0)
-    # conta quantos subsídios foram fornecidos (1); soma dos bits = total
     out["quantidade_subsidios"] = mat.sum(axis=1).astype(int)
     return out
 
@@ -86,23 +86,20 @@ def _prepare_xy(
 ) -> Tuple[pd.DataFrame, np.ndarray]:
     missing = [c for c in (categorical_cols + numeric_cols + [target_col]) if c not in df.columns]
     if missing:
-        raise KeyError(f"Colunas ausentes: {missing}. Colunas disponíveis: {list(df.columns)}")
+        raise KeyError(f"Colunas ausentes: {missing}. Colunas disponiveis: {list(df.columns)}")
 
     if target_mode == "vitoria_macro":
-        # target binário: vitória nossa = (Resultado macro == positive_label)
         y = (df[target_col].astype(str).str.strip() == positive_label).astype(float).to_numpy()
     elif target_mode == "severidade_micro":
-        # target contínuo: 0 = vitória, 0.5 = derrota parcial, 1 = derrota total
         micro = df[target_col].astype(str).str.strip()
         y = micro.map(micro_mapping).astype(float).to_numpy()
         if np.isnan(y).any():
             unknown = sorted(set(micro[~micro.isin(list(micro_mapping.keys()))].unique().tolist()))
             raise ValueError(
-                f"Há valores de '{target_col}' sem mapeamento: {unknown}. "
-                f"Ajuste --micro-mapping."
+                f"Ha valores de '{target_col}' sem mapeamento: {unknown}. Ajuste --micro-mapping."
             )
     else:
-        raise ValueError("--target-mode inválido. Use 'vitoria_macro' ou 'severidade_micro'.")
+        raise ValueError("--target-mode invalido. Use 'vitoria_macro' ou 'severidade_micro'.")
 
     X = df[categorical_cols + numeric_cols].copy()
     for c in numeric_cols:
@@ -112,7 +109,10 @@ def _prepare_xy(
 
 
 def _build_pipeline(
-    categorical_cols: List[str], numeric_cols: List[str], *, categorical_encoding: str
+    categorical_cols: List[str],
+    numeric_cols: List[str],
+    *,
+    categorical_encoding: str,
 ) -> Pipeline:
     if categorical_encoding not in {"ordinal", "onehot"}:
         raise ValueError("--categorical-encoding deve ser 'ordinal' ou 'onehot'")
@@ -131,54 +131,50 @@ def _build_pipeline(
             ]
         )
     else:
-        # Mantido para compatibilidade/experimentos, mas o default do projeto agora é ordinal.
         from sklearn.preprocessing import OneHotEncoder
 
         cat_transformer = OneHotEncoder(handle_unknown="ignore", sparse_output=False)
 
     pre = ColumnTransformer(
         transformers=[
-            (
-                "cat",
-                cat_transformer,
-                categorical_cols,
-            ),
+            ("cat", cat_transformer, categorical_cols),
             ("num", Pipeline([("scaler", StandardScaler())]), numeric_cols),
         ],
         remainder="drop",
         verbose_feature_names_out=False,
     )
 
-    # GP "puro" não escala para dezenas de milhares de linhas. Este modelo é pensado para
-    # treinar em uma amostra (configurável) e devolver média + desvio padrão (incerteza).
-    kernel = C(1.0, (1e-2, 1e2)) * RBF(length_scale=1.0, length_scale_bounds=(1e-2, 1e2)) + WhiteKernel(
-        noise_level=1e-3, noise_level_bounds=(1e-6, 1e-1)
-    )
-    gpr = GaussianProcessRegressor(
-        kernel=kernel,
-        normalize_y=True,
-        random_state=0,
-        alpha=1e-6,
-    )
-
-    return Pipeline([("pre", pre), ("gpr", gpr)])
+    regressor = LinearRegression()
+    return Pipeline([("pre", pre), ("regressor", regressor)])
 
 
 def _predict_proba_with_uncertainty(pipe: Pipeline, X: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
-    mean, std = pipe.predict(X, return_std=True)
-    proba = np.clip(mean, 0.0, 1.0)
+    pred = np.asarray(pipe.predict(X), dtype=float)
+    proba = np.clip(pred, 0.0, 1.0)
+    base_std = float(getattr(pipe, "_prediction_std", 0.0))
+    std = np.full_like(proba, fill_value=max(base_std, 0.0), dtype=float)
     return proba, std
 
 
 def _to_taxa_vitoria(score: np.ndarray, target_mode: str) -> np.ndarray:
     if target_mode == "severidade_micro":
-        # No modo severidade: 0 = vitória e 1 = derrota.
         return np.clip(1.0 - score, 0.0, 1.0)
     return np.clip(score, 0.0, 1.0)
 
 
+def _aplicar_regra_subsidios(
+    taxa_vitoria: np.ndarray, quantidade_subsidios: np.ndarray, penalidade_por_subsidio: float
+) -> np.ndarray:
+    taxa = np.clip(np.asarray(taxa_vitoria, dtype=float), 0.0, 1.0)
+    qtd = np.clip(np.asarray(quantidade_subsidios, dtype=float), 0.0, float(len(SUBSIDIO_COLUMNS)))
+    fator = 1.0 - float(penalidade_por_subsidio) * qtd
+    return np.clip(taxa * fator, 0.0, 1.0)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Treina GP para chance de vitória (Êxito).")
+    parser = argparse.ArgumentParser(
+        description="Treina regressao linear para chance de vitoria (compatibilidade de modulo)."
+    )
     parser.add_argument(
         "--input-file",
         default=os.path.join("db", "raw", "Hackaton_Enter_Base_Candidatos.csv"),
@@ -198,15 +194,15 @@ def main() -> int:
     parser.add_argument(
         "--model-out",
         default=os.path.join("db", "processed", "gp_vitoria_model.joblib"),
-        help="Arquivo joblib para persistir o pipeline treinado e metadados de inferência.",
+        help="Arquivo joblib para persistir o pipeline treinado e metadados de inferencia.",
     )
     parser.add_argument(
         "--target-mode",
         default="vitoria_macro",
         choices=["vitoria_macro", "severidade_micro"],
         help=(
-            "Tipo de alvo. 'vitoria_macro' usa Resultado macro binário. "
-            "'severidade_micro' aprende: 0=Improcedência, 0.5=Parcial procedência, 1=Procedência."
+            "Tipo de alvo. 'vitoria_macro' usa Resultado macro binario. "
+            "'severidade_micro' aprende: 0=Improcedencia, 0.5=Parcial procedencia, 1=Procedencia."
         ),
     )
     parser.add_argument(
@@ -214,23 +210,22 @@ def main() -> int:
         default=None,
         help="Coluna alvo. Se omitido: Resultado macro (vitoria_macro) ou Resultado micro (severidade_micro).",
     )
-    # Nesta base, "Êxito" representa êxito do banco (classe positiva).
     parser.add_argument("--positive-label", default="Êxito")
     parser.add_argument(
         "--micro-mapping",
         default='{"Improcedência": 0, "Parcial procedência": 0.5, "Procedência": 1, "Acordo": 0.5}',
-        help="JSON com mapeamento de Resultado micro -> número (usado em severidade_micro).",
+        help="JSON com mapeamento de Resultado micro -> numero (usado em severidade_micro).",
     )
     parser.add_argument(
         "--categorical-encoding",
         default="ordinal",
         choices=["ordinal", "onehot"],
-        help="Como transformar texto em número. 'ordinal' evita colunas binárias (one-hot).",
+        help="Como transformar texto em numero.",
     )
     parser.add_argument(
         "--exclude-resultado-micro",
         default="Extinção",
-        help="Remove do treino/validação todas as linhas cujo Resultado micro seja este valor.",
+        help="Remove do treino/validacao linhas com este valor em Resultado micro.",
     )
     parser.add_argument("--test-size", type=float, default=0.2)
     parser.add_argument("--random-state", type=int, default=42)
@@ -238,9 +233,17 @@ def main() -> int:
         "--max-train-rows",
         type=int,
         default=5000,
-        help="Limite de linhas para treinar o GP (por performance). Use 0 para usar tudo (pode ser impraticável).",
+        help="Tamanho maximo de amostra para treino da regressao linear. Use 0 para usar tudo.",
     )
+    parser.add_argument(
+        "--penalidade-por-subsidio",
+        type=float,
+        default=0.0,
+        help="Penalidade multiplicativa aplicada a chance de vitoria para cada subsidio.",
+    )
+    parser.add_argument("--quantidade-subsidios-weight", type=float, default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
+
     micro_mapping = json.loads(args.micro_mapping)
     if args.target_col is None:
         args.target_col = "Resultado macro" if args.target_mode == "vitoria_macro" else "Resultado micro"
@@ -249,21 +252,17 @@ def main() -> int:
     df = _load_dataset(input_file, args.sheet)
     n_total = int(len(df))
     n_filtered_out = 0
+
     if args.exclude_resultado_micro:
         if "Resultado micro" not in df.columns:
-            raise KeyError("Coluna 'Resultado micro' não encontrada para aplicar o filtro solicitado.")
+            raise KeyError("Coluna 'Resultado micro' nao encontrada para aplicar o filtro solicitado.")
         mask_exclude = df["Resultado micro"].astype(str).str.strip() == str(args.exclude_resultado_micro).strip()
         n_filtered_out = int(mask_exclude.sum())
         df = df.loc[~mask_exclude].reset_index(drop=True)
 
-    # Features: subsídios entram só como quantidade total (soma dos bits), não coluna a coluna.
     df = _add_quantidade_subsidios(df)
-
     categorical_cols = ["Sub-assunto"]
-    numeric_cols = [
-        "Valor da causa",
-        "quantidade_subsidios",
-    ]
+    numeric_cols = ["Valor da causa"]
 
     X, y = _prepare_xy(
         df,
@@ -275,8 +274,9 @@ def main() -> int:
         numeric_cols=numeric_cols,
     )
 
+    stratify_target = y if args.target_mode == "vitoria_macro" else None
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=args.test_size, random_state=args.random_state, stratify=y
+        X, y, test_size=args.test_size, random_state=args.random_state, stratify=stratify_target
     )
 
     if args.max_train_rows and args.max_train_rows > 0 and len(X_train) > args.max_train_rows:
@@ -289,12 +289,17 @@ def main() -> int:
         y_fit = y_train
 
     pipe = _build_pipeline(
-        categorical_cols, numeric_cols, categorical_encoding=args.categorical_encoding
+        categorical_cols,
+        numeric_cols,
+        categorical_encoding=args.categorical_encoding,
     )
     pipe.fit(X_fit, y_fit)
+    train_pred = np.asarray(pipe.predict(X_fit), dtype=float)
+    pipe._prediction_std = float(np.std(np.asarray(y_fit, dtype=float) - train_pred))
 
     model_payload = {
         "pipeline": pipe,
+        "model_type": "linear_regression",
         "target_mode": args.target_mode,
         "features_categorical": categorical_cols,
         "features_numeric": numeric_cols,
@@ -302,29 +307,40 @@ def main() -> int:
         "positive_label": args.positive_label,
         "micro_mapping": micro_mapping,
         "subsidio_columns": SUBSIDIO_COLUMNS,
+        "penalidade_por_subsidio": float(args.penalidade_por_subsidio),
     }
     os.makedirs(os.path.dirname(args.model_out) or ".", exist_ok=True)
     joblib.dump(model_payload, args.model_out)
 
     proba, std = _predict_proba_with_uncertainty(pipe, X_test)
+    qtd_test = pd.to_numeric(df.loc[X_test.index, "quantidade_subsidios"], errors="coerce").fillna(0.0).to_numpy()
+    taxa_vitoria_test = _to_taxa_vitoria(proba, args.target_mode)
+    taxa_vitoria_test = _aplicar_regra_subsidios(
+        taxa_vitoria_test, qtd_test, args.penalidade_por_subsidio
+    )
+
     metrics = {"mean_std": float(np.mean(std))}
     if args.target_mode == "vitoria_macro":
-        y_pred = (proba >= 0.5).astype(float)
+        y_pred = (taxa_vitoria_test >= 0.5).astype(float)
         metrics.update(
             {
-                "roc_auc": float(roc_auc_score(y_test, proba)),
+                "roc_auc": float(roc_auc_score(y_test, taxa_vitoria_test)),
                 "accuracy@0.5": float(accuracy_score(y_test, y_pred)),
-                "brier": float(brier_score_loss(y_test, proba)),
+                "brier": float(brier_score_loss(y_test, taxa_vitoria_test)),
             }
         )
     else:
-        # severidade_micro: não é classificação; métricas de calibração/erro simples
-        mse = float(np.mean((proba - y_test) ** 2))
-        mae = float(np.mean(np.abs(proba - y_test)))
+        mse = float(np.mean((taxa_vitoria_test - y_test) ** 2))
+        mae = float(np.mean(np.abs(taxa_vitoria_test - y_test)))
         metrics.update({"mse": mse, "mae": mae})
 
     proba_all, std_all = _predict_proba_with_uncertainty(pipe, X)
+    qtd_all = pd.to_numeric(df["quantidade_subsidios"], errors="coerce").fillna(0.0).to_numpy()
     taxa_vitoria_all = _to_taxa_vitoria(proba_all, args.target_mode)
+    taxa_vitoria_all = _aplicar_regra_subsidios(
+        taxa_vitoria_all, qtd_all, args.penalidade_por_subsidio
+    )
+
     valor_da_causa = pd.to_numeric(df.get("Valor da causa", 0), errors="coerce").fillna(0.0)
     predictions_df = pd.DataFrame(
         {
@@ -335,6 +351,7 @@ def main() -> int:
     )
     if "Número do processo" in df.columns:
         predictions_df.insert(0, "numero_processo", df["Número do processo"])
+
     os.makedirs(os.path.dirname(args.predictions_csv_out) or ".", exist_ok=True)
     predictions_df.to_csv(args.predictions_csv_out, index=False, encoding="utf-8-sig")
 

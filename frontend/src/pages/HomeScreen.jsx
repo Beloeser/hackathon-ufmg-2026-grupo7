@@ -18,6 +18,232 @@ const FOLDER_DEFINITIONS = [
   { id: 4, name: 'Urgentes', icon: Sparkles },
 ]
 
+const DOCUMENT_MOCKS = [
+  {
+    id: 1,
+    folderId: 0,
+    title: 'Processo 1803258-78.2026.8.18.4949',
+    type: 'Acao Civil Publica',
+    date: '15/04/2026',
+    status: 'Em andamento',
+  },
+  {
+    id: 2,
+    folderId: 0,
+    title: 'Processo 8727380-45.2026.8.23.5908',
+    type: 'Execucao Fiscal',
+    date: '14/04/2026',
+    status: 'Audiencia marcada',
+  },
+  {
+    id: 3,
+    folderId: 0,
+    title: 'Processo 7839094-27.2026.8.10.5200',
+    type: 'Acao de Cobranca',
+    date: '14/04/2026',
+    status: 'Contestacao apresentada',
+  },
+  {
+    id: 4,
+    folderId: 0,
+    title: 'Processo 1394233-39.2026.8.07.6079',
+    type: 'Cumprimento de Sentenca',
+    date: '13/04/2026',
+    status: 'Em diligencia',
+  },
+  {
+    id: 5,
+    folderId: 0,
+    title: 'Processo 8494629-27.2026.8.22.1066',
+    type: 'Acao Monitora',
+    date: '12/04/2026',
+    status: 'Pericia designada',
+  },
+  {
+    id: 6,
+    folderId: 0,
+    title: 'Processo 8082318-17.2026.8.21.6170',
+    type: 'Acao Trabalhista',
+    date: '11/04/2026',
+    status: 'Aguardando audiencia',
+  },
+  {
+    id: 7,
+    folderId: 1,
+    title: 'Processo 8701036-35.2026.8.25.3642',
+    type: 'Recurso de Apelacao',
+    date: '14/04/2026',
+    status: 'Aguardando analise',
+  },
+  {
+    id: 8,
+    folderId: 1,
+    title: 'Processo 6957247-73.2026.8.05.9104',
+    type: 'Embargos de Declaracao',
+    date: '13/04/2026',
+    status: 'Em triagem',
+  },
+  {
+    id: 9,
+    folderId: 1,
+    title: 'Processo 4296371-90.2026.8.14.7296',
+    type: 'Agravo de Instrumento',
+    date: '13/04/2026',
+    status: 'Analise documental',
+  },
+  {
+    id: 10,
+    folderId: 1,
+    title: 'Processo 3392829-81.2026.8.16.5921',
+    type: 'Acao de Indenizacao',
+    date: '12/04/2026',
+    status: 'Revisao juridica',
+  },
+  {
+    id: 11,
+    folderId: 1,
+    title: 'Processo 0007990-82.2026.8.26.0224',
+    type: 'Mandado de Seguranca',
+    date: '11/04/2026',
+    status: 'Aguardando parecer',
+  },
+  {
+    id: 12,
+    folderId: 1,
+    title: 'Processo 0008012-04.2026.8.26.0224',
+    type: 'Acao Possessoria',
+    date: '10/04/2026',
+    status: 'Em analise tecnica',
+  },
+  {
+    id: 13,
+    folderId: 2,
+    title: 'Processo 0003456-78.2026.8.26.0587',
+    type: 'Peticao Inicial',
+    date: '12/04/2026',
+    status: 'Aguardando decisao',
+  },
+  {
+    id: 14,
+    folderId: 2,
+    title: 'Processo 0003501-30.2026.8.26.0587',
+    type: 'Acao Revisional',
+    date: '11/04/2026',
+    status: 'Concluso para sentenca',
+  },
+  {
+    id: 15,
+    folderId: 2,
+    title: 'Processo 0003588-19.2026.8.26.0587',
+    type: 'Acao de Alimentos',
+    date: '10/04/2026',
+    status: 'Aguardando despacho',
+  },
+  {
+    id: 16,
+    folderId: 2,
+    title: 'Processo 0003666-40.2026.8.26.0587',
+    type: 'Tutela de Urgencia',
+    date: '09/04/2026',
+    status: 'Aguardando conclusao',
+  },
+  {
+    id: 17,
+    folderId: 2,
+    title: 'Processo 0003720-11.2026.8.26.0587',
+    type: 'Cumprimento Provisorio',
+    date: '08/04/2026',
+    status: 'Aguardando decisao interlocutoria',
+  },
+  {
+    id: 18,
+    folderId: 2,
+    title: 'Processo 0003804-59.2026.8.26.0587',
+    type: 'Acao de Obrigacao de Fazer',
+    date: '07/04/2026',
+    status: 'Pendente de despacho final',
+  },
+  {
+    id: 19,
+    folderId: 3,
+    title: 'Processo 0009876-54.2026.8.26.0344',
+    type: 'Mandado de Seguranca',
+    date: '10/04/2026',
+    status: 'Arquivado definitivamente',
+  },
+  {
+    id: 20,
+    folderId: 3,
+    title: 'Processo 0009920-84.2026.8.26.0344',
+    type: 'Acao Declaratoria',
+    date: '09/04/2026',
+    status: 'Baixado',
+  },
+  {
+    id: 21,
+    folderId: 3,
+    title: 'Processo 0009958-27.2026.8.26.0344',
+    type: 'Execucao de Titulo',
+    date: '08/04/2026',
+    status: 'Arquivado por acordo',
+  },
+  {
+    id: 22,
+    folderId: 3,
+    title: 'Processo 0010002-71.2026.8.26.0344',
+    type: 'Acao de Reparacao',
+    date: '07/04/2026',
+    status: 'Transito em julgado',
+  },
+  {
+    id: 23,
+    folderId: 3,
+    title: 'Processo 0010044-18.2026.8.26.0344',
+    type: 'Execucao Trabalhista',
+    date: '06/04/2026',
+    status: 'Arquivo morto',
+  },
+  {
+    id: 24,
+    folderId: 3,
+    title: 'Processo 0010099-06.2026.8.26.0344',
+    type: 'Acao de Inventario',
+    date: '05/04/2026',
+    status: 'Arquivado sem baixa pendente',
+  },
+  {
+    id: 25,
+    folderId: 4,
+    title: 'Processo 0002468-13.2026.8.26.0176',
+    type: 'Acao Trabalhista',
+    date: '08/04/2026',
+    status: 'Prazo em 24h',
+  },
+  {
+    id: 26,
+    folderId: 4,
+    title: 'Processo 0002520-95.2026.8.26.0176',
+    type: 'Acao Cautelar',
+    date: '08/04/2026',
+    status: 'Risco de prescricao',
+  },
+  {
+    id: 27,
+    folderId: 4,
+    title: 'Processo 0002608-43.2026.8.26.0176',
+    type: 'Tutela Antecipada',
+    date: '07/04/2026',
+    status: 'Liminar pendente',
+  },
+  {
+    id: 28,
+    folderId: 4,
+    title: 'Processo 0002688-77.2026.8.26.0176',
+    type: 'Reintegracao de Posse',
+    date: '06/04/2026',
+    status: 'Peticao urgente para hoje',
+  },
+]
 const PageGrid = styled.div`
   display: grid;
   grid-template-columns: ${({ $chatOpen }) =>
@@ -76,6 +302,14 @@ function normalizeText(value) {
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
+}
+
+const PROCESS_NUMBER_REGEX = /\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}/
+
+function extractProcessNumberFromText(value) {
+  const text = String(value || '')
+  const match = text.match(PROCESS_NUMBER_REGEX)
+  return match ? match[0] : null
 }
 
 function mapStatusToFolderId(status) {
@@ -367,6 +601,21 @@ export default function HomeScreen() {
       role: item.role,
       content: item.content,
     }))
+    const contractNumbers = []
+
+    if (selectedDocument) {
+      const processNumber = selectedDocument.processNumber || extractProcessNumberFromText(selectedDocument.title)
+      if (processNumber) {
+        contractNumbers.push(processNumber)
+      }
+    } else {
+      for (const document of documentsForSelectedFolder) {
+        const processNumber = document.processNumber || extractProcessNumberFromText(document.title)
+        if (processNumber) {
+          contractNumbers.push(processNumber)
+        }
+      }
+    }
 
     updateMessagesForContext(requestContext, (currentMessages) => [
       ...currentMessages,
@@ -378,10 +627,12 @@ export default function HomeScreen() {
     setLoadingContextKey(requestContext.key)
 
     try {
+      const dedupedContractNumbers = Array.from(new Set(contractNumbers))
       const response = await sendChatMessage({
         message,
         history,
         context: requestContext,
+        contractNumbers: dedupedContractNumbers,
       })
 
       const assistantReply = typeof response?.reply === 'string' ? response.reply.trim() : ''
