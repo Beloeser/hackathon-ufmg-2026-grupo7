@@ -23,7 +23,7 @@ const resultSchema = new mongoose.Schema(
 const caseSchema = new mongoose.Schema(
   {
     processNumber: {
-      type: String,
+      type: String, 
       required: true,
       unique: true,
       trim: true
