@@ -27,6 +27,13 @@ export async function getCaseComparisons() {
 
 export async function getLawyerPerformance() {
   const response = await api.get('/admin/dashboard/lawyer-performance')
+export async function fetchCases() {
+  const response = await api.get('/cases')
+  return response.data
+}
+
+export async function fetchCaseById(caseId) {
+  const response = await api.get(`/cases/${caseId}`)
   return response.data
 }
 

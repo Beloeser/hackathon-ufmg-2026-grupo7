@@ -3,6 +3,7 @@ import HomeScreen from './pages/HomeScreen'
 import LoginScreen from './pages/LoginScreen'
 import AdminDashboard from './pages/AdminDashboard'
 import ProtectedRoute from './components/ProtectedRoute'
+import CaseDetailsScreen from './pages/CaseDetailsScreen'
 
 function App() {
   return (
@@ -19,6 +20,7 @@ function App() {
             </ProtectedRoute>
           }
         />
+        <Route path="/dashboard/process/:caseId" element={<CaseDetailsScreen />} />
       </Routes>
     </Router>
   )
