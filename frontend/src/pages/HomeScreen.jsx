@@ -299,7 +299,7 @@ export default function HomeScreen() {
   const [viewMode, setViewMode] = useState('card')
   const [searchQuery, setSearchQuery] = useState('')
   const [isChatOpen, setIsChatOpen] = useState(true)
-  const [sidebarActive, setSidebarActive] = useState('settings')
+  const [sidebarActive, setSidebarActive] = useState('home')
   const [chatInput, setChatInput] = useState('')
   const [loadingContextKey, setLoadingContextKey] = useState(null)
   const [chatErrorsByContext, setChatErrorsByContext] = useState({})

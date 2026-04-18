@@ -7,19 +7,19 @@ dotenv.config()
 
 const sampleUsers = [
   {
-    username: 'maria.silva',
+    email: 'maria.silva@escritorio.com.br',
     password: 'senha123',
     name: 'Maria Silva',
     role: 'advogado'
   },
   {
-    username: 'joao.santos',
+    email: 'joao.santos@escritorio.com.br',
     password: 'adv2024',
     name: 'João Santos',
     role: 'advogado'
   },
   {
-    username: 'ana.costa',
+    email: 'ana.costa@escritorio.com.br',
     password: 'demo456',
     name: 'Ana Costa',
     role: 'admin'
@@ -149,18 +149,18 @@ const runSeed = async () => {
 
   const createdUsers = []
   for (const userData of sampleUsers) {
-    let user = await User.findOne({ username: userData.username })
+    let user = await User.findOne({ email: userData.email })
     if (!user) {
       user = await User.create(userData)
-      console.log(`Criado usuário: ${user.username}`)
+      console.log(`Criado usuário: ${user.email}`)
     } else {
-      console.log(`Usuário já existe: ${user.username}`)
+      console.log(`Usuário já existe: ${user.email}`)
     }
     createdUsers.push(user)
   }
 
   const lawyerMap = createdUsers.reduce((map, user) => {
-    map[user.username] = user._id
+    map[user.email] = user._id
     return map
   }, {})
 
