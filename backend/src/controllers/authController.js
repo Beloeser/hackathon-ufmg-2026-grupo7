@@ -2,17 +2,17 @@ import User from '../models/UserModel.js'
 
 export const login = async (req, res) => {
   try {
-    const { username, password } = req.body ?? {}
+    const { email, password } = req.body ?? {}
 
-    if (!username || !password) {
+    if (!email || !password) {
       return res.status(400).json({
         success: false,
-        message: 'Username e password são obrigatórios.'
+        message: 'email e senha são obrigatórios.'
       })
     }
 
-    const normalizedUsername = String(username).trim()
-    const user = await User.findOne({ username: normalizedUsername })
+    const normalizedEmail = String(email).trim().toLowerCase()
+    const user = await User.findOne({ email: normalizedEmail })
 
     if (!user || user.password !== String(password)) {
       return res.status(401).json({
@@ -26,7 +26,7 @@ export const login = async (req, res) => {
       message: 'Login realizado com sucesso.',
       user: {
         id: user._id,
-        username: user.username,
+        email: user.email,
         name: user.name,
         role: user.role
       }

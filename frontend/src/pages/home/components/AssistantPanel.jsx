@@ -6,9 +6,9 @@ const COLLAPSE_CHAR_LIMIT = 260
 const COLLAPSE_LINE_LIMIT = 4
 
 const Panel = styled.aside`
-  grid-column: 4;
-  grid-row: 2;
   display: flex;
+  height: 100%;
+  max-height: 100%;
   width: 100%;
   min-width: 0;
   min-height: 0;
@@ -338,13 +338,20 @@ export default function AssistantPanel({
   contextLabel,
   contextDescription,
 }) {
-  const bottomRef = useRef(null)
+  const bodyRef = useRef(null)
   const [expandedMessageIds, setExpandedMessageIds] = useState({})
 
   const canSend = useMemo(() => inputValue.trim().length > 0 && !isLoading, [inputValue, isLoading])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (!bodyRef.current) {
+      return
+    }
+
+    bodyRef.current.scrollTo({
+      top: bodyRef.current.scrollHeight,
+      behavior: 'smooth',
+    })
   }, [messages, isLoading])
 
   useEffect(() => {
@@ -380,7 +387,7 @@ export default function AssistantPanel({
         </CloseButton>
       </Header>
 
-      <Body>
+      <Body ref={bodyRef}>
         <MessageStack>
           {messages.length === 0 ? (
             <EmptyState>
@@ -435,7 +442,7 @@ export default function AssistantPanel({
             </BotMessageRow>
           )}
 
-          <BottomAnchor ref={bottomRef} />
+          <BottomAnchor />
         </MessageStack>
       </Body>
 

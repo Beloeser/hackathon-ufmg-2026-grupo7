@@ -338,14 +338,49 @@ export default function LoginScreen() {
     setError('')
     setIsSubmitting(true)
 
-    // Mock de autenticacao para navegacao local.
-    await new Promise((resolve) => setTimeout(resolve, 500))
+    try {
+      const response = await fetch('/api/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          email: email.trim(),
+          password: password.trim(),
+        }),
+      })
 
-    if (remember) {
-      localStorage.setItem('coffeebreakers.last_email', email.trim())
+      const data = await response.json()
+
+      if (!response.ok) {
+        setError(data.message || 'Erro ao fazer login. Tente novamente.')
+        setIsSubmitting(false)
+        return
+      }
+
+      if (data.success) {
+        // Store user data in localStorage
+        localStorage.setItem('user', JSON.stringify(data.user))
+        localStorage.setItem('authToken', 'token')
+
+        if (remember) {
+          localStorage.setItem('coffeebreakers.last_email', email.trim())
+        }
+
+        // Redirect to dashboard or admin dashboard based on role
+        if (data.user.role === 'admin') {
+          navigate('/admin/dashboard', { replace: true })
+        } else {
+          navigate('/dashboard', { replace: true })
+        }
+      } else {
+        setError(data.message || 'Erro ao fazer login.')
+        setIsSubmitting(false)
+      }
+    } catch (err) {
+      setError('Erro ao conectar com o servidor.')
+      setIsSubmitting(false)
     }
-
-    navigate('/dashboard', { replace: true })
   }
 
   return (

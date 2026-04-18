@@ -1,8 +1,9 @@
-﻿import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import styled from 'styled-components'
 import { Clock, FileText, Folder, Sparkles, TrendingUp } from 'lucide-react'
 import { usePersistentChatHistory } from '../hooks/usePersistentChatHistory'
-import { sendChatMessage } from '../services/api'
+import { fetchCases, sendChatMessage } from '../services/api'
 import AssistantPanel from './home/components/AssistantPanel'
 import DocumentsPanel from './home/components/DocumentsPanel'
 import FoldersPanel from './home/components/FoldersPanel'
@@ -243,18 +244,28 @@ const DOCUMENT_MOCKS = [
     status: 'Peticao urgente para hoje',
   },
 ]
-
 const PageGrid = styled.div`
   display: grid;
   grid-template-columns: ${({ $chatOpen }) =>
     $chatOpen ? '76px 360px minmax(0, 1fr) minmax(340px, 420px)' : '76px 360px minmax(0, 1fr)'};
   grid-template-rows: 96px minmax(0, 1fr);
   width: 100%;
-  height: 100%;
+  height: 100vh;
+  height: 100dvh;
+  min-width: 0;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow: hidden;
+  background: #f3f4f6;
+`
+
+const DashboardChatSlot = styled.div`
+  grid-column: 4;
+  grid-row: 2;
+  display: flex;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-  background: #f3f4f6;
 `
 
 function createChatMessage(role, content) {
@@ -301,19 +312,161 @@ function extractProcessNumberFromText(value) {
   return match ? match[0] : null
 }
 
+function mapStatusToFolderId(status) {
+  const normalizedStatus = normalizeText(status)
+
+  if (
+    normalizedStatus.includes('urgente') ||
+    normalizedStatus.includes('prazo') ||
+    normalizedStatus.includes('liminar')
+  ) {
+    return 4
+  }
+
+  if (
+    normalizedStatus.includes('arquiv') ||
+    normalizedStatus.includes('baixado') ||
+    normalizedStatus.includes('transito')
+  ) {
+    return 3
+  }
+
+  if (
+    normalizedStatus.includes('aguardando') ||
+    normalizedStatus.includes('pendente') ||
+    normalizedStatus.includes('concluso') ||
+    normalizedStatus.includes('despacho')
+  ) {
+    return 2
+  }
+
+  if (
+    normalizedStatus.includes('analise') ||
+    normalizedStatus.includes('triagem') ||
+    normalizedStatus.includes('revisao')
+  ) {
+    return 1
+  }
+
+  return 0
+}
+
+function formatDateFromValue(value) {
+  if (!value) {
+    return ''
+  }
+
+  const date = value instanceof Date ? value : new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return ''
+  }
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).format(date)
+}
+
+function extractCaseList(payload) {
+  if (Array.isArray(payload)) {
+    return payload
+  }
+
+  if (Array.isArray(payload?.data)) {
+    return payload.data
+  }
+
+  if (Array.isArray(payload?.cases)) {
+    return payload.cases
+  }
+
+  return []
+}
+
+function normalizeIncomingDocument(rawDocument, index) {
+  if (!rawDocument || typeof rawDocument !== 'object') {
+    return null
+  }
+
+  const idSource = rawDocument.id || rawDocument._id || rawDocument.processNumber || `case-${index}`
+  const id = String(idSource)
+  const status = String(rawDocument.status || 'em_analise')
+  const folderIdCandidate = Number(rawDocument.folderId)
+  const folderId = Number.isFinite(folderIdCandidate) ? folderIdCandidate : mapStatusToFolderId(status)
+
+  return {
+    id,
+    folderId,
+    title: rawDocument.title || (rawDocument.processNumber ? `Processo ${rawDocument.processNumber}` : `Processo ${id}`),
+    type: rawDocument.type || rawDocument.subject || 'Assunto nao informado',
+    date: rawDocument.date || formatDateFromValue(rawDocument.updatedAt || rawDocument.createdAt),
+    status,
+    processNumber: rawDocument.processNumber || '',
+  }
+}
+
 export default function HomeScreen() {
+  const navigate = useNavigate()
   const [selectedFolder, setSelectedFolder] = useState(0)
   const [selectedDocumentId, setSelectedDocumentId] = useState(null)
   const [viewMode, setViewMode] = useState('card')
   const [searchQuery, setSearchQuery] = useState('')
   const [isChatOpen, setIsChatOpen] = useState(true)
-  const [sidebarActive, setSidebarActive] = useState('settings')
+  const [sidebarActive, setSidebarActive] = useState('home')
   const [chatInput, setChatInput] = useState('')
   const [loadingContextKey, setLoadingContextKey] = useState(null)
   const [chatErrorsByContext, setChatErrorsByContext] = useState({})
+  const [documents, setDocuments] = useState([])
+  const [isCasesLoading, setIsCasesLoading] = useState(true)
+  const [casesError, setCasesError] = useState('')
+
+  useEffect(() => {
+    let isMounted = true
+
+    const loadCases = async () => {
+      setIsCasesLoading(true)
+      setCasesError('')
+
+      try {
+        const payload = await fetchCases()
+        const rawCases = extractCaseList(payload)
+        const normalizedCases = rawCases
+          .map((caseItem, index) => normalizeIncomingDocument(caseItem, index))
+          .filter(Boolean)
+
+        if (!isMounted) {
+          return
+        }
+
+        setDocuments(normalizedCases)
+      } catch (error) {
+        if (!isMounted) {
+          return
+        }
+
+        const message =
+          error?.response?.data?.message || error?.message || 'Nao foi possivel carregar os processos do backend.'
+
+        setDocuments([])
+        setCasesError(message)
+      } finally {
+        if (isMounted) {
+          setIsCasesLoading(false)
+        }
+      }
+    }
+
+    loadCases()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
 
   const foldersWithCount = useMemo(() => {
-    const countByFolder = DOCUMENT_MOCKS.reduce((accumulator, document) => {
+    const countByFolder = documents.reduce((accumulator, document) => {
       const currentCount = accumulator[document.folderId] || 0
       return {
         ...accumulator,
@@ -325,11 +478,11 @@ export default function HomeScreen() {
       ...folder,
       count: countByFolder[folder.id] || 0,
     }))
-  }, [])
+  }, [documents])
 
   const documentsForSelectedFolder = useMemo(
-    () => DOCUMENT_MOCKS.filter((document) => document.folderId === selectedFolder),
-    [selectedFolder],
+    () => documents.filter((document) => document.folderId === selectedFolder),
+    [documents, selectedFolder],
   )
 
   const filteredDocuments = useMemo(() => {
@@ -337,7 +490,7 @@ export default function HomeScreen() {
 
     return documentsForSelectedFolder.filter((document) => {
       const searchableText = normalizeText(
-        `${document.title} ${document.type} ${document.status} ${document.date}`,
+        `${document.title} ${document.type} ${document.status} ${document.date} ${document.processNumber}`,
       )
 
       return normalizedQuery.length === 0 || searchableText.includes(normalizedQuery)
@@ -345,8 +498,8 @@ export default function HomeScreen() {
   }, [documentsForSelectedFolder, searchQuery])
 
   const selectedDocument = useMemo(
-    () => DOCUMENT_MOCKS.find((document) => document.id === selectedDocumentId) || null,
-    [selectedDocumentId],
+    () => documents.find((document) => String(document.id) === String(selectedDocumentId)) || null,
+    [documents, selectedDocumentId],
   )
 
   const activeChatContext = useMemo(
@@ -373,7 +526,9 @@ export default function HomeScreen() {
       return
     }
 
-    const existsInCurrentResult = filteredDocuments.some((document) => document.id === selectedDocumentId)
+    const existsInCurrentResult = filteredDocuments.some(
+      (document) => String(document.id) === String(selectedDocumentId),
+    )
 
     if (!existsInCurrentResult) {
       setSelectedDocumentId(null)
@@ -409,7 +564,15 @@ export default function HomeScreen() {
   }
 
   const handleSelectDocument = (documentId) => {
-    setSelectedDocumentId(documentId)
+    setSelectedDocumentId(String(documentId))
+  }
+
+  const handleOpenDocument = (documentId) => {
+    if (!documentId) {
+      return
+    }
+
+    navigate(`/dashboard/process/${documentId}`)
   }
 
   const handleChatInputChange = (value) => {
@@ -440,13 +603,13 @@ export default function HomeScreen() {
     const contractNumbers = []
 
     if (selectedDocument) {
-      const processNumber = extractProcessNumberFromText(selectedDocument.title)
+      const processNumber = selectedDocument.processNumber || extractProcessNumberFromText(selectedDocument.title)
       if (processNumber) {
         contractNumbers.push(processNumber)
       }
     } else {
       for (const document of documentsForSelectedFolder) {
-        const processNumber = extractProcessNumberFromText(document.title)
+        const processNumber = document.processNumber || extractProcessNumberFromText(document.title)
         if (processNumber) {
           contractNumbers.push(processNumber)
         }
@@ -491,8 +654,8 @@ export default function HomeScreen() {
 
   const chatContextDescription =
     activeChatContext.type === 'process'
-      ? `Historico do processo selecionado`
-      : `Historico da pasta selecionada`
+      ? 'Historico do processo selecionado'
+      : 'Historico da pasta selecionada'
 
   return (
     <PageGrid $chatOpen={isChatOpen}>
@@ -516,21 +679,28 @@ export default function HomeScreen() {
         documents={filteredDocuments}
         selectedDocumentId={selectedDocumentId}
         onSelectDocument={handleSelectDocument}
+        onOpenDocument={handleOpenDocument}
         viewMode={viewMode}
         totalDocuments={documentsForSelectedFolder.length}
+        isLoading={isCasesLoading}
+        error={casesError}
       />
-      <AssistantPanel
-        isOpen={isChatOpen}
-        onClose={() => setIsChatOpen(false)}
-        messages={chatMessages}
-        inputValue={chatInput}
-        onInputChange={handleChatInputChange}
-        onSendMessage={handleSendMessage}
-        isLoading={isChatLoading}
-        error={chatError}
-        contextLabel={activeChatContext.label}
-        contextDescription={chatContextDescription}
-      />
+      {isChatOpen ? (
+        <DashboardChatSlot>
+          <AssistantPanel
+            isOpen={isChatOpen}
+            onClose={() => setIsChatOpen(false)}
+            messages={chatMessages}
+            inputValue={chatInput}
+            onInputChange={handleChatInputChange}
+            onSendMessage={handleSendMessage}
+            isLoading={isChatLoading}
+            error={chatError}
+            contextLabel={activeChatContext.label}
+            contextDescription={chatContextDescription}
+          />
+        </DashboardChatSlot>
+      ) : null}
     </PageGrid>
   )
 }

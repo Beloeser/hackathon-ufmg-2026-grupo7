@@ -28,7 +28,7 @@ const sampleUsers = [
   {
     username: 'joao.santos',
     password: 'adv2024',
-    name: 'Jo√£o Santos',
+    name: 'Jo„o Santos',
     role: 'advogado'
   },
   {
@@ -104,14 +104,14 @@ const loadSampleCasesFromCsv = async () => {
 
   return rows
     .map((row) => ({
-      processNumber: String(row['N√∫mero do processo'] || '').trim(),
+      processNumber: String(row['N˙mero do processo'] || '').trim(),
       uf: String(row.UF || '').trim().toUpperCase(),
       subject: String(row.Assunto || '').trim(),
       subSubject: String(row['Sub-assunto'] || '').trim(),
       macroResult: String(row['Resultado macro'] || '').trim(),
       microResult: String(row['Resultado micro'] || '').trim(),
       claimValue: toNumberOrZero(row['Valor da causa']),
-      condemnationValue: toNumberOrZero(row['Valor da condena√ß√£o/indeniza√ß√£o']),
+      condemnationValue: toNumberOrZero(row['Valor da condenaÁ„o/indenizaÁ„o']),
       status: 'em_andamento',
     }))
     .filter((item) => item.processNumber && item.uf && item.subject)
@@ -138,9 +138,9 @@ const runSeed = async () => {
     let user = await User.findOne({ username: userData.username })
     if (!user) {
       user = await User.create(userData)
-      console.log(`Criado usu√°rio: ${user.username}`)
+      console.log(`Criado usu·rio: ${user.username}`)
     } else {
-      console.log(`Usu√°rio j√° existe: ${user.username}`)
+      console.log(`Usu·rio j· existe: ${user.username}`)
     }
     createdUsers.push(user)
   }
@@ -153,7 +153,7 @@ const runSeed = async () => {
   for (const caseData of caseExamples) {
     const existingCase = await Case.findOne({ processNumber: caseData.processNumber })
     if (existingCase) {
-      console.log(`Processo j√° existe: ${caseData.processNumber}`)
+      console.log(`Processo j· existe: ${caseData.processNumber}`)
       continue
     }
 

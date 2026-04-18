@@ -1,10 +1,10 @@
 ﻿import { useNavigate } from 'react-router-dom'
 import styled from 'styled-components'
-import { Home, User, Shield } from 'lucide-react'
+import { Shield, User, Home } from 'lucide-react'
 
 const NAV_ITEMS = [
+  { id: 'admin', label: 'Dashboard', icon: Shield },
   { id: 'home', label: 'Home', icon: Home },
-  { id: 'admin', label: 'Admin', icon: Shield },
 ]
 
 const Sidebar = styled.aside`
@@ -23,7 +23,6 @@ const ProfileButton = styled.button`
   display: flex;
   width: 48px;
   height: 48px;
-  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   border: 0;
@@ -31,11 +30,6 @@ const ProfileButton = styled.button`
   background: #ffb300;
   color: #111827;
   box-shadow: 0 2px 14px rgba(255, 179, 0, 0.38);
-  transition: filter 0.2s ease;
-
-  &:hover {
-    filter: brightness(1.05);
-  }
 `
 
 const Nav = styled.nav`
@@ -54,7 +48,6 @@ const NavButton = styled.button`
   display: flex;
   width: 100%;
   height: 44px;
-  flex-shrink: 0;
   align-items: center;
   justify-content: center;
   border: 0;
@@ -83,42 +76,29 @@ const NavButton = styled.button`
   }
 `
 
-export default function HomeSidebar({ activeItem, onSelectItem }) {
+function AdminSidebar() {
   const navigate = useNavigate()
-
-  const userStr = localStorage.getItem('user')
-  const user = userStr ? JSON.parse(userStr) : null
-  const isAdmin = user?.role === 'admin'
-
-  const handleItemClick = (itemId) => {
-    if (itemId === 'admin') {
-      navigate('/admin/dashboard')
-      return
-    }
-
-    navigate('/dashboard')
-    onSelectItem(itemId)
-  }
+  const currentPath = window.location.pathname
 
   return (
     <Sidebar>
-      <ProfileButton type="button" aria-label="Perfil">
+      <ProfileButton type="button" aria-label="Perfil administrativo">
         <User size={20} strokeWidth={2} />
       </ProfileButton>
 
-      <Nav aria-label="Navegacao principal">
+      <Nav aria-label="Navegacao administrativa">
         {NAV_ITEMS.map((item) => {
-          if (item.id === 'admin' && !isAdmin) return null
-
           const Icon = item.icon
-          const isActive = activeItem === item.id
+          const isActive =
+            (item.id === 'admin' && currentPath === '/admin/dashboard') ||
+            (item.id === 'home' && currentPath === '/dashboard')
 
           return (
             <NavButton
               key={item.id}
               type="button"
               $active={isActive}
-              onClick={() => handleItemClick(item.id)}
+              onClick={() => navigate(item.id === 'admin' ? '/admin/dashboard' : '/dashboard')}
               aria-label={item.label}
               aria-current={isActive ? 'true' : undefined}
             >
@@ -130,3 +110,5 @@ export default function HomeSidebar({ activeItem, onSelectItem }) {
     </Sidebar>
   )
 }
+
+export default AdminSidebar
