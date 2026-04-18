@@ -20,55 +20,56 @@ const PROCESSOS_EM_ANDAMENTO_CSV = path.resolve(
 
 const sampleUsers = [
   {
-    username: 'maria.silva',
+    email: 'maria.silva@coffeebreakers.local',
     password: 'senha123',
     name: 'Maria Silva',
-    role: 'advogado'
+    role: 'advogado',
   },
   {
-    username: 'joao.santos',
+    email: 'joao.santos@coffeebreakers.local',
     password: 'adv2024',
-    name: 'João Santos',
-    role: 'advogado'
+    name: 'Joao Santos',
+    role: 'advogado',
   },
   {
-    username: 'ana.costa',
+    email: 'ana.costa@coffeebreakers.local',
     password: 'demo456',
     name: 'Ana Costa',
-    role: 'admin'
-  }
+    role: 'admin',
+  },
 ]
 
-const LEGACY_SAMPLE_PROCESS_NUMBERS = [
-  '1764352-89.2025.8.06.1818',
-  '1764353-90.2025.8.05.0001',
-  '1764354-01.2025.8.07.0002',
-  '1764355-12.2025.8.26.0003',
-  '1764356-23.2025.8.16.0004',
-]
+function normalizeHeader(value) {
+  return String(value || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
 
-const parseCsvLine = (line) => {
-  const out = []
+function parseCsvLine(line) {
+  const values = []
   let current = ''
   let inQuotes = false
 
   for (let i = 0; i < line.length; i += 1) {
     const char = line[i]
-    const next = line[i + 1]
-
-    if (char === '"' && inQuotes && next === '"') {
-      current += '"'
-      i += 1
-      continue
-    }
+    const nextChar = line[i + 1]
 
     if (char === '"') {
-      inQuotes = !inQuotes
+      if (inQuotes && nextChar === '"') {
+        current += '"'
+        i += 1
+      } else {
+        inQuotes = !inQuotes
+      }
       continue
     }
 
     if (char === ',' && !inQuotes) {
-      out.push(current)
+      values.push(current)
       current = ''
       continue
     }
@@ -76,92 +77,161 @@ const parseCsvLine = (line) => {
     current += char
   }
 
-  out.push(current)
-  return out
+  values.push(current)
+  return values
 }
 
-const toNumberOrZero = (value) => {
-  const n = Number.parseFloat(String(value ?? '').trim())
-  return Number.isFinite(n) ? n : 0
+function toNumberOrZero(value) {
+  const raw = String(value ?? '').trim()
+  if (!raw) {
+    return 0
+  }
+
+  const commaIndex = raw.lastIndexOf(',')
+  const dotIndex = raw.lastIndexOf('.')
+
+  let normalized = raw
+
+  if (commaIndex > dotIndex) {
+    normalized = raw.replace(/\./g, '').replace(',', '.')
+  } else {
+    normalized = raw.replace(/,/g, '')
+  }
+
+  const parsed = Number.parseFloat(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
 }
 
-const loadSampleCasesFromCsv = async () => {
+function normalizeStatusLabel(value) {
+  const text = String(value || '').trim()
+  return text || 'Em andamento'
+}
+
+function inferActionClass(subject, subSubject) {
+  const merged = `${String(subject || '')} ${String(subSubject || '')}`
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+
+  if (merged.includes('bancario') || merged.includes('juros abusivos') || merged.includes('revisional')) {
+    return 'revisional_bancaria'
+  }
+
+  if (merged.includes('dano moral') || merged.includes('indeniz') || merged.includes('responsabilidade civil')) {
+    return 'indenizatoria'
+  }
+
+  if (merged.includes('execucao fiscal') || merged.includes('cobranca') || merged.includes('recuperacao de credito')) {
+    return 'cobranca'
+  }
+
+  return 'geral'
+}
+
+async function loadSampleCasesFromCsv() {
   const raw = await fs.readFile(PROCESSOS_EM_ANDAMENTO_CSV, 'utf8')
   const lines = raw.split(/\r?\n/).filter((line) => line.trim().length > 0)
+
   if (lines.length < 2) {
     return []
   }
 
-  const headers = parseCsvLine(lines[0].replace(/^\uFEFF/, ''))
+  const rawHeaders = parseCsvLine(lines[0].replace(/^\uFEFF/, ''))
+  const headers = rawHeaders.map((header) => normalizeHeader(header))
+
   const rows = lines.slice(1).map((line) => {
     const values = parseCsvLine(line)
     const record = {}
-    headers.forEach((header, idx) => {
-      record[header] = values[idx] ?? ''
+
+    headers.forEach((header, index) => {
+      record[header] = String(values[index] ?? '').trim()
     })
+
     return record
   })
 
   return rows
-    .map((row) => ({
-      processNumber: String(row['Número do processo'] || '').trim(),
-      uf: String(row.UF || '').trim().toUpperCase(),
-      subject: String(row.Assunto || '').trim(),
-      subSubject: String(row['Sub-assunto'] || '').trim(),
-      macroResult: String(row['Resultado macro'] || '').trim(),
-      microResult: String(row['Resultado micro'] || '').trim(),
-      claimValue: toNumberOrZero(row['Valor da causa']),
-      condemnationValue: toNumberOrZero(row['Valor da condenação/indenização']),
-      status: 'em_andamento',
-    }))
-    .filter((item) => item.processNumber && item.uf && item.subject)
+    .map((row) => {
+      const processNumber = String(row.numero_do_processo || row.numero_processo || '').trim()
+      const uf = String(row.uf || '').trim().toUpperCase()
+      const subject = String(row.assunto || '').trim()
+      const subSubject = String(row.sub_assunto || '').trim()
+
+      if (!processNumber || !uf || !subject) {
+        return null
+      }
+
+      const macroResult = String(row.resultado_macro || 'Em andamento').trim() || 'Em andamento'
+      const microResult = String(row.resultado_micro || macroResult).trim() || macroResult
+      const statusLabel = normalizeStatusLabel(microResult || macroResult)
+
+      return {
+        processNumber,
+        uf,
+        subject,
+        subSubject,
+        macroResult,
+        microResult,
+        claimValue: toNumberOrZero(row.valor_da_causa),
+        condemnationValue: toNumberOrZero(row.valor_da_condenacao_indenizacao),
+        status: statusLabel,
+        internalStatus: statusLabel,
+        judicialStatus: 'nao_confirmado',
+        judicialPhase: 'fase processual nao confirmada',
+        actionClass: inferActionClass(subject, subSubject),
+        clientRole: 'autor',
+      }
+    })
+    .filter(Boolean)
+}
+
+async function ensureSampleUsers() {
+  const users = []
+
+  for (const userData of sampleUsers) {
+    const email = String(userData.email || '').trim().toLowerCase()
+    let user = await User.findOne({ email })
+
+    if (!user) {
+      user = await User.create({ ...userData, email })
+      console.log(`Usuario criado: ${user.email}`)
+    }
+
+    users.push(user)
+  }
+
+  return users
 }
 
 const runSeed = async () => {
   await connectDB()
+
   const sampleCases = await loadSampleCasesFromCsv()
   if (sampleCases.length === 0) {
-    throw new Error(
-      `Nenhum processo encontrado em ${PROCESSOS_EM_ANDAMENTO_CSV}.`
-    )
+    throw new Error(`Nenhum processo encontrado em ${PROCESSOS_EM_ANDAMENTO_CSV}.`)
   }
 
-  const removedLegacy = await Case.deleteMany({
-    processNumber: { $in: LEGACY_SAMPLE_PROCESS_NUMBERS }
-  })
-  if (removedLegacy.deletedCount > 0) {
-    console.log(`Removidos ${removedLegacy.deletedCount} processos legados do seed antigo.`)
+  const users = await ensureSampleUsers()
+  if (users.length === 0) {
+    throw new Error('Nenhum usuario disponivel para vincular os processos do seed.')
   }
 
-  const createdUsers = []
-  for (const userData of sampleUsers) {
-    let user = await User.findOne({ username: userData.username })
-    if (!user) {
-      user = await User.create(userData)
-      console.log(`Criado usuário: ${user.username}`)
-    } else {
-      console.log(`Usuário já existe: ${user.username}`)
-    }
-    createdUsers.push(user)
-  }
+  await Case.deleteMany({})
+  console.log('Colecao de processos limpa para recarga do CSV.')
 
-  const caseExamples = sampleCases.map((caseData, index) => ({
+  const now = Date.now()
+  const casesToInsert = sampleCases.map((caseData, index) => ({
     ...caseData,
-    assignedLawyerId: createdUsers[index % createdUsers.length]._id
+    assignedLawyerId: users[index % users.length]._id,
+    createdAt: new Date(now - index * 60000),
+    updatedAt: new Date(now - index * 60000),
   }))
 
-  for (const caseData of caseExamples) {
-    const existingCase = await Case.findOne({ processNumber: caseData.processNumber })
-    if (existingCase) {
-      console.log(`Processo já existe: ${caseData.processNumber}`)
-      continue
-    }
+  const inserted = await Case.insertMany(casesToInsert, { ordered: true })
 
-    const createdCase = await Case.create(caseData)
-    console.log(`Criado processo: ${createdCase.processNumber}`)
-  }
-
-  console.log('Seed de advogados e processos finalizada.')
+  console.log(`Processos carregados do CSV: ${sampleCases.length}`)
+  console.log(`Processos inseridos no Mongo: ${inserted.length}`)
+  console.log('Seed finalizada com sucesso.')
   process.exit(0)
 }
 

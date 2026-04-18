@@ -1,12 +1,266 @@
 import Case from '../models/CaseModel.js'
 import mongoose from 'mongoose'
 import OpenAI from 'openai'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 
 const MODEL_NAME = process.env.OPENAI_MODEL || 'gpt-5.4'
 const AI_DISCLAIMER =
   'Esta e uma sugestao automatizada e nao substitui validacao do advogado responsavel.'
+const DEFAULT_DEFENSE_COST = Number(process.env.CUSTO_DEFESA_PADRAO || 7000)
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = path.dirname(__filename)
+const REPO_ROOT = path.resolve(__dirname, '..', '..', '..')
+const PRECOMPUTED_ANALYSIS_CSV = path.resolve(
+  REPO_ROOT,
+  'db',
+  'processed',
+  'processos_em_andamento_avaliados.csv'
+)
 
 let openaiClient = null
+let precomputedMetricsByProcess = null
+let precomputedMetricsMtimeMs = null
+
+function parseCsvLineValues(line) {
+  const values = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i]
+    const nextChar = line[i + 1]
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        current += '"'
+        i += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+
+    if (char === ',' && !inQuotes) {
+      values.push(current)
+      current = ''
+      continue
+    }
+
+    current += char
+  }
+
+  values.push(current)
+  return values
+}
+
+function toNumberOrNull(value) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
+function normalizeProcessNumberKey(value) {
+  return String(value || '').trim()
+}
+
+function normalizeLookupKey(value) {
+  return String(value || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function getValueByAliases(record, aliases) {
+  if (!record || typeof record !== 'object') {
+    return ''
+  }
+
+  for (const alias of aliases) {
+    if (Object.prototype.hasOwnProperty.call(record, alias)) {
+      return record[alias]
+    }
+  }
+
+  const normalizedRecord = {}
+  for (const [key, value] of Object.entries(record)) {
+    normalizedRecord[normalizeLookupKey(key)] = value
+  }
+
+  for (const alias of aliases) {
+    const normalizedAlias = normalizeLookupKey(alias)
+    if (Object.prototype.hasOwnProperty.call(normalizedRecord, normalizedAlias)) {
+      return normalizedRecord[normalizedAlias]
+    }
+  }
+
+  return ''
+}
+
+function toPercent(value) {
+  const parsed = toNumberOrNull(value)
+  if (parsed === null) {
+    return null
+  }
+
+  if (parsed >= 0 && parsed <= 1) {
+    return parsed * 100
+  }
+
+  return parsed
+}
+
+function computeEconomyFromMetrics({ economyFromCsv, expectedLoss, expectedAgreementCost }) {
+  if (economyFromCsv !== null) {
+    return economyFromCsv
+  }
+
+  if (expectedLoss === null || expectedAgreementCost === null) {
+    return null
+  }
+
+  if (!Number.isFinite(DEFAULT_DEFENSE_COST)) {
+    return null
+  }
+
+  return expectedLoss + DEFAULT_DEFENSE_COST - expectedAgreementCost
+}
+
+function buildExpectativaResumo({ decision, economy }) {
+  if (!decision && economy === null) {
+    return 'Sem dados suficientes para expectativa financeira.'
+  }
+
+  if (decision === 'acordo') {
+    if (economy === null) {
+      return 'Acordo recomendado; expectativa de reducao de risco financeiro.'
+    }
+
+    if (economy >= 0) {
+      return 'Acordo recomendado com expectativa de economia frente a defesa.'
+    }
+
+    return 'Acordo recomendado para reduzir risco processual, apesar do custo esperado maior.'
+  }
+
+  if (decision === 'defesa') {
+    if (economy === null) {
+      return 'Defesa recomendada por perfil de vitoria mais favoravel.'
+    }
+
+    if (economy < 0) {
+      return 'Defesa recomendada com expectativa financeira melhor que o acordo.'
+    }
+
+    return 'Defesa recomendada por estrategia juridica, com impacto financeiro proximo ao acordo.'
+  }
+
+  return 'Expectativa financeira equilibrada entre acordo e defesa.'
+}
+
+function loadPrecomputedMetricsByProcess() {
+  if (!fs.existsSync(PRECOMPUTED_ANALYSIS_CSV)) {
+    precomputedMetricsByProcess = new Map()
+    precomputedMetricsMtimeMs = null
+    return precomputedMetricsByProcess
+  }
+
+  const stats = fs.statSync(PRECOMPUTED_ANALYSIS_CSV)
+  if (
+    precomputedMetricsByProcess &&
+    Number.isFinite(precomputedMetricsMtimeMs) &&
+    precomputedMetricsMtimeMs === stats.mtimeMs
+  ) {
+    return precomputedMetricsByProcess
+  }
+
+  const raw = fs.readFileSync(PRECOMPUTED_ANALYSIS_CSV, 'utf-8').replace(/^\uFEFF/, '')
+  const lines = raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+
+  if (lines.length < 2) {
+    precomputedMetricsByProcess = new Map()
+    precomputedMetricsMtimeMs = stats.mtimeMs
+    return precomputedMetricsByProcess
+  }
+
+  const headers = parseCsvLineValues(lines[0]).map((header) => String(header || '').trim())
+  const map = new Map()
+
+  for (const line of lines.slice(1)) {
+    const values = parseCsvLineValues(line)
+    const row = {}
+
+    for (let i = 0; i < headers.length; i += 1) {
+      row[headers[i]] = values[i]
+    }
+
+    const processNumber = normalizeProcessNumberKey(
+      getValueByAliases(row, ['Numero do processo', 'numero_do_processo', 'numero_processo'])
+    )
+
+    if (!processNumber) {
+      continue
+    }
+
+    const winRatePercent = toPercent(row.chance_vitoria)
+    const uncertaintyPercent = toPercent(row.incerteza)
+    const agreementAcceptancePercent = toPercent(row.probabilidade_aceite)
+    const agreementValue = toNumberOrNull(row.valor_acordo_justo)
+    const expectedAgreementCost = toNumberOrNull(row.custo_total_esperado_acordo)
+    const expectedLoss = toNumberOrNull(row.valor_esperado_perda)
+    const economyFromCsv = toNumberOrNull(row.economia_estimada)
+    const economy = computeEconomyFromMetrics({
+      economyFromCsv,
+      expectedLoss,
+      expectedAgreementCost,
+    })
+
+    let decision = null
+    if (agreementValue !== null && agreementValue > 0) {
+      decision = 'acordo'
+    } else if (winRatePercent !== null) {
+      decision = winRatePercent >= 65 ? 'defesa' : 'acordo'
+    }
+
+    map.set(processNumber, {
+      taxaVitoriaPercent: winRatePercent,
+      incertezaPercent: uncertaintyPercent,
+      valorAcordoProposto: agreementValue,
+      probabilidadeAceiteAcordoPercent: agreementAcceptancePercent,
+      custoTotalEsperadoAcordo: expectedAgreementCost,
+      expectativaPerda: expectedLoss,
+      custoDefesaEstimado: Number.isFinite(DEFAULT_DEFENSE_COST) ? DEFAULT_DEFENSE_COST : null,
+      economiaFinanceiraEstimada: economy,
+      decisaoSugerida: decision,
+      expectativaResumo: buildExpectativaResumo({ decision, economy }),
+      fonte: 'csv_modelo_preprocessado',
+    })
+  }
+
+  precomputedMetricsByProcess = map
+  precomputedMetricsMtimeMs = stats.mtimeMs
+  return precomputedMetricsByProcess
+}
+
+function getPrecomputedMetricsForProcess(processNumber) {
+  const normalizedKey = normalizeProcessNumberKey(processNumber)
+  if (!normalizedKey) {
+    return null
+  }
+
+  const map = loadPrecomputedMetricsByProcess()
+  if (!map || map.size === 0) {
+    return null
+  }
+
+  return map.get(normalizedKey) || null
+}
 
 function normalizeText(value) {
   return String(value || '')
@@ -421,6 +675,44 @@ function buildDecisionTrail(caseData) {
   return current
 }
 
+function buildModelMetrics(caseData) {
+  const metricsFromCsv = getPrecomputedMetricsForProcess(caseData?.processNumber)
+  if (metricsFromCsv) {
+    return metricsFromCsv
+  }
+
+  const recommendationDecision = normalizeDecision(caseData?.recommendation?.decision)
+  const recommendationConfidencePercent =
+    toNumberOrNull(caseData?.recommendation?.confidence) !== null
+      ? Math.min(Math.max(Number(caseData.recommendation.confidence), 0), 1) * 100
+      : null
+  const suggestedAgreementValue = toNumberOrNull(caseData?.recommendation?.suggestedValue)
+  const expectedLoss = toNumberOrNull(caseData?.condemnationValue)
+  const expectedAgreementCost = suggestedAgreementValue
+  const economy = computeEconomyFromMetrics({
+    economyFromCsv: null,
+    expectedLoss,
+    expectedAgreementCost,
+  })
+
+  return {
+    taxaVitoriaPercent: recommendationConfidencePercent,
+    incertezaPercent: null,
+    valorAcordoProposto: suggestedAgreementValue,
+    probabilidadeAceiteAcordoPercent: null,
+    custoTotalEsperadoAcordo: expectedAgreementCost,
+    expectativaPerda: expectedLoss,
+    custoDefesaEstimado: Number.isFinite(DEFAULT_DEFENSE_COST) ? DEFAULT_DEFENSE_COST : null,
+    economiaFinanceiraEstimada: economy,
+    decisaoSugerida: recommendationDecision || null,
+    expectativaResumo: buildExpectativaResumo({
+      decision: recommendationDecision || null,
+      economy,
+    }),
+    fonte: 'fallback_recommendation',
+  }
+}
+
 function prepareCaseView(caseData) {
   const internalStatus = caseData?.internalStatus || caseData?.status || 'em_analise'
   const judicialPhase = caseData?.judicialPhase || 'fase processual nao confirmada'
@@ -436,6 +728,7 @@ function prepareCaseView(caseData) {
     { ...caseData, internalStatus, judicialPhase, actionClass, clientRole },
     financialEstimate,
   )
+  const modelMetrics = buildModelMetrics(caseData)
   const origins = buildOrigins({ ...caseData, internalStatus, judicialPhase, financialEstimate })
   const confidenceByBlock = buildConfidenceByBlock({ ...caseData, financialEstimate, judicialPhase })
 
@@ -459,6 +752,7 @@ function prepareCaseView(caseData) {
       status: lawyerDecisionStatus,
     },
     financialEstimate,
+    modelMetrics,
     terminologyAlerts,
     consistencyIssues,
     decisionTrail: buildDecisionTrail(caseData),
@@ -497,6 +791,7 @@ function mapCaseToDocument(caseItem) {
     recommendation: prepared.recommendation,
     result: prepared.result,
     financialEstimate: prepared.financialEstimate,
+    modelMetrics: prepared.modelMetrics || {},
     consistencyIssues: prepared.consistencyIssues,
     terminologyAlerts: prepared.terminologyAlerts,
     dataOrigins: prepared.metadata?.origins || {},
@@ -510,6 +805,15 @@ function buildCaseSummary(caseData) {
   const prepared = prepareCaseView(caseData)
   const range = `${formatMoney(prepared.financialEstimate.uncertaintyMin)} a ${formatMoney(prepared.financialEstimate.uncertaintyMax)}`
   const judicialPhaseLabel = formatJudicialPhaseForSummary(prepared.judicialPhase)
+  const modelMetrics = prepared.modelMetrics || {}
+  const winRateLabel =
+    Number.isFinite(Number(modelMetrics.taxaVitoriaPercent))
+      ? `${Number(modelMetrics.taxaVitoriaPercent).toFixed(1)}%`
+      : 'Nao informado'
+  const proposedAgreementLabel =
+    Number.isFinite(Number(modelMetrics.valorAcordoProposto))
+      ? formatMoney(modelMetrics.valorAcordoProposto)
+      : 'Nao informado'
 
   const lines = [
     `Digest juridico do processo ${prepared.processNumber || 'sem numero'} (${prepared.uf || '--'}):`,
@@ -518,6 +822,7 @@ function buildCaseSummary(caseData) {
     `Classificacao da acao: ${prepared.actionClass}. Papel do cliente: ${prepared.clientRole}.`,
     `Assunto principal: ${prepared.subject || 'Nao informado'} | Subassunto: ${prepared.subSubject || 'Nao informado'}.`,
     `Valor da causa: ${formatMoney(prepared.claimValue)}. ${prepared.financialEstimate.label}: ${formatMoney(prepared.financialEstimate.estimatedValue)} (faixa ${range}).`,
+    `Taxa de vitoria estimada: ${winRateLabel}. Valor de acordo proposto: ${proposedAgreementLabel}.`,
     `Recomendacao automatizada atual: ${prepared.recommendation?.decision || 'Nao informada'} (status ${prepared.recommendation?.status || 'preliminar'}).`,
     `Decisao humana do advogado: ${prepared.result?.decisionTaken || 'Nao informada'} (status ${prepared.result?.status || 'pendente'}).`,
     `Base da estimativa: ${prepared.financialEstimate.calculationBase}`,

@@ -176,6 +176,41 @@ function toNumberOrNull(value) {
 function normalizeProcessKey(value) {
   return String(value || '').trim()
 }
+function normalizeLookupKey(value) {
+  return String(value || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function getValueByAliases(record, aliases) {
+  if (!record || typeof record !== 'object') {
+    return ''
+  }
+
+  for (const alias of aliases) {
+    if (Object.prototype.hasOwnProperty.call(record, alias)) {
+      return record[alias]
+    }
+  }
+
+  const normalizedRecord = {}
+  for (const [key, value] of Object.entries(record)) {
+    normalizedRecord[normalizeLookupKey(key)] = value
+  }
+
+  for (const alias of aliases) {
+    const value = normalizedRecord[normalizeLookupKey(alias)]
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return value
+    }
+  }
+
+  return ''
+}
 
 function loadPrecomputedAnalysisByProcess() {
   if (!fs.existsSync(PRECOMPUTED_ANALYSIS_CSV)) {
@@ -215,7 +250,11 @@ function loadPrecomputedAnalysisByProcess() {
     }
 
     const processNumber = normalizeProcessKey(
-      row['Número do processo'] || row['NÃºmero do processo'] || row.numero_processo
+      getValueByAliases(row, [
+        'Numero do processo',
+        'numero_do_processo',
+        'numero_processo',
+      ])
     )
 
     if (!processNumber) {
@@ -503,8 +542,15 @@ async function runContractAnalysisByInput({ contractInput }) {
 
   return {
     numero_processo:
-      normalizeMessageContent(contractInput?.['Número do processo']) ||
-      normalizeMessageContent(contractInput?.numeroProcesso) ||
+      normalizeMessageContent(
+        getValueByAliases(contractInput, [
+          'Numero do processo',
+          'numero_do_processo',
+          'numeroProcesso',
+          'numero_processo',
+          'processNumber',
+        ])
+      ) ||
       'processo_sem_numero',
     taxa_probabilidade_vitoria: result.taxa_probabilidade_vitoria,
     fazer_acordo: Boolean(result.fazer_acordo),
