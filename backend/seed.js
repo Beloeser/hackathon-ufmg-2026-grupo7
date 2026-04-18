@@ -22,7 +22,7 @@ const sampleUsers = [
     username: 'ana.costa',
     password: 'demo456',
     name: 'Ana Costa',
-    role: 'advogado'
+    role: 'admin'
   }
 ]
 
